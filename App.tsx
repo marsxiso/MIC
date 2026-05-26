@@ -223,6 +223,7 @@ const monthNames: Record<string, string> = {
 
 const PRODUCT_OPTIONS = ['Втулка', 'Переходник', 'Удлинитель', 'Корпус'] as const;
 const DEFECT_STATUS_OPTIONS: DefectReviewStatus[] = ['Забраковано', 'На рассмотрении', 'Допущено до сборки'];
+const BATCH_STATUS_ORDER: BatchStatus[] = ['Создана', 'В процессе', 'Готова к проверке', 'Проверена', 'Готова к отправке', 'Отправлено на сборку'];
 type ProductOption = (typeof PRODUCT_OPTIONS)[number];
 
 
@@ -586,6 +587,7 @@ export default function App() {
   const [expandedArchiveMonths, setExpandedArchiveMonths] = useState<string[]>([]);
   const [showReportFromPicker, setShowReportFromPicker] = useState(false);
   const [showReportToPicker, setShowReportToPicker] = useState(false);
+  const [expandedBatchStatuses, setExpandedBatchStatuses] = useState<BatchStatus[]>(['В процессе', 'Готова к проверке', 'Проверена', 'Готова к отправке']);
 
   const controllers = useMemo(
     () => users.filter((user) => user.role === 'Контролер' || user.role === 'Контрольный мастер'),
@@ -731,12 +733,27 @@ export default function App() {
       return visibleBatchesPage.filter((b) => b.assignedWorkerId === currentUser.id);
     }
     if (currentUser.role === 'Контролер' || currentUser.role === 'Контрольный мастер') {
-      return visibleBatchesPage.filter(
-        (b) => b.status === 'Готова к проверке' || b.status === 'Проверена' || (!b.acceptedByUserId || b.acceptedByUserId === currentUser.id),
+      return visibleBatchesPage.filter((b) =>
+        ['В процессе', 'Готова к проверке', 'Проверена', 'Готова к отправке'].includes(b.status)
       );
     }
     return visibleBatchesPage;
   }, [visibleBatchesPage, currentUser]);
+
+  const batchesByStatusForCurrentUser = useMemo(() => {
+    const grouped = BATCH_STATUS_ORDER.reduce((acc, status) => {
+      const items = filteredBatchesForCurrentUser.filter((batch) => batch.status === status);
+      if (items.length > 0) acc[status] = items;
+      return acc;
+    }, {} as Record<BatchStatus, Batch[]>);
+    return grouped;
+  }, [filteredBatchesForCurrentUser]);
+
+  const toggleBatchStatusGroup = (status: BatchStatus) => {
+    setExpandedBatchStatuses((prev) =>
+      prev.includes(status) ? prev.filter((item) => item !== status) : [...prev, status],
+    );
+  };
 
   const visibleShifts = useMemo(
     () => shifts
@@ -921,6 +938,7 @@ export default function App() {
         if (raw) {
           const user = JSON.parse(raw) as User;
           setCurrentUser(user);
+          if (user.role === 'Рабочий') setScreen('batches');
         }
       } catch {}
     })();
@@ -967,6 +985,12 @@ export default function App() {
     }
   }, [currentUser, acceptedBatchForCurrentUser, selectedBatchId]);
 
+  useEffect(() => {
+    if (currentUser?.role === 'Рабочий' && screen === 'dashboard') {
+      setScreen('batches');
+    }
+  }, [currentUser, screen]);
+
   const handleLogin = async () => {
     try {
       const response = await fetch(`${API_URL}/auth/login`, {
@@ -988,7 +1012,7 @@ export default function App() {
       };
       setCurrentUser(nextUser);
       await AsyncStorage.setItem('lizun_current_user', JSON.stringify(nextUser));
-      setScreen('dashboard');
+      setScreen(nextUser.role === 'Рабочий' ? 'batches' : 'dashboard');
       await syncAllFromServer();
     } catch {
       Alert.alert('Ошибка', `Не удалось подключиться к серверу ${API_URL}`);
@@ -1483,10 +1507,16 @@ export default function App() {
   };
 
   const saveUser = async () => {
-    if (!currentUser || !editingUserId) return;
+    if (!currentUser) return;
+    if (!userForm.name.trim() || !userForm.login.trim() || (!editingUserId && !userForm.password.trim())) {
+      Alert.alert('Ошибка', editingUserId ? 'Заполните имя, логин и роль' : 'Заполните имя, логин, пароль и роль');
+      return;
+    }
     try {
-      const response = await fetch(`${API_URL}/api/users/${editingUserId}`, {
-        method: 'PUT',
+      const url = editingUserId ? `${API_URL}/api/users/${editingUserId}` : `${API_URL}/api/users`;
+      const method = editingUserId ? 'PUT' : 'POST';
+      const response = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           full_name: userForm.name.trim(),
@@ -1498,15 +1528,15 @@ export default function App() {
       });
       const data = await readJson(response);
       if (!response.ok) {
-        Alert.alert('Ошибка', data?.message || 'Не удалось обновить пользователя');
+        Alert.alert('Ошибка', data?.message || (editingUserId ? 'Не удалось обновить пользователя' : 'Не удалось создать пользователя'));
         return;
       }
       await syncAllFromServer();
       setEditingUserId(null);
       setUserForm({ name: '', login: '', password: '', role: 'Контролер' });
-      Alert.alert('Готово', 'Пользователь обновлен');
+      Alert.alert('Готово', editingUserId ? 'Пользователь обновлен' : 'Пользователь создан');
     } catch {
-      Alert.alert('Ошибка', 'Не удалось обновить пользователя');
+      Alert.alert('Ошибка', editingUserId ? 'Не удалось обновить пользователя' : 'Не удалось создать пользователя');
     }
   };
 
@@ -1621,10 +1651,13 @@ export default function App() {
 
     try {
       if (editingShiftId) {
+        const editBody = selectedScheduleEmployeeType === 'worker'
+          ? { worker_id: Number((selectedEmployee as Worker).id), shift_date: shiftDate, shift_type: workerShiftType, employee_type: 'worker', editor_id: Number(currentUser.id), editor_role: currentUser.role }
+          : { user_id: Number((selectedEmployee as User).id), shift_date: shiftDate, shift_type: 'day', employee_type: 'controller', editor_id: Number(currentUser.id), editor_role: currentUser.role };
         const response = await fetch(`${API_URL}/api/shifts/${editingShiftId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ shift_date: shiftDate, editor_id: Number(currentUser.id) }),
+          body: JSON.stringify(editBody),
         });
         const data = await readJson(response);
         if (!response.ok) {
@@ -1666,6 +1699,7 @@ export default function App() {
     setShiftDate(shift.date);
     setShiftEmployeeName(shift.employeeName);
     setAdminScheduleType(shift.employeeType);
+    setWorkerShiftType((shift.shiftType as 'day' | 'night') || 'day');
     setScreen('schedule');
   };
 
@@ -1764,13 +1798,13 @@ export default function App() {
         </View>
         <Text style={styles.text}>Номер партии: {batch.batchNumber}</Text>
         <Text style={styles.text}>Дата: {formatDisplayDate(mode === 'report' && batch.sentToAssemblyAt ? batch.sentToAssemblyAt : batch.manufactureDate)}</Text>
-        {(mode !== 'report' || batch.status === 'Готова к отправке' || isExpandedReportCard) && (
+        {(mode !== 'report' || isExpandedReportCard) && (
           <>
             <Text style={styles.text}>Количество: {batch.quantity}</Text>
             <Text style={styles.text}>Работник: {batch.workerName || 'Не назначен'}</Text>
             {!!batch.workerShiftType && <Text style={styles.text}>Смена: {batch.workerShiftType === 'night' ? 'Ночная' : 'Дневная'}</Text>}
             {mode === 'report' && batch.sentToAssemblyAt && isExpandedReportCard && <Text style={styles.text}>Отправлена: {formatDisplayDate(batch.sentToAssemblyAt)}</Text>}
-            {inspection && (mode !== 'report' || isExpandedReportCard || batch.status === 'Готова к отправке') && renderInspectionPreview(inspection)}
+            {inspection && (mode !== 'report' || isExpandedReportCard) && renderInspectionPreview(inspection)}
           </>
         )}
 
@@ -1847,7 +1881,7 @@ export default function App() {
           </Pressable>
         )}
 
-        {mode === 'report' && canSendToAssembly && (
+        {mode === 'report' && isExpandedReportCard && canSendToAssembly && (
           <Pressable style={styles.primaryButton} onPress={() => sendBatchToAssembly(batch)}>
             <Text style={styles.primaryButtonText}>Отправить на сборку</Text>
           </Pressable>
@@ -1949,7 +1983,7 @@ export default function App() {
           </View>
 
           <View style={styles.navRow}>
-            <TabButton title="Главная" active={screen === 'dashboard'} onPress={() => setScreen('dashboard')} />
+            {currentUser.role !== 'Рабочий' && <TabButton title="Главная" active={screen === 'dashboard'} onPress={() => setScreen('dashboard')} />}
             <TabButton title="Партии" active={screen === 'batches'} onPress={() => setScreen('batches')} />
             {showInspectionTab && <TabButton title="Контроль" active={screen === 'inspection'} onPress={() => setScreen('inspection')} />}
             <TabButton title="Отчёты" active={screen === 'report'} onPress={() => setScreen('report')} />
@@ -2049,7 +2083,19 @@ export default function App() {
               {filteredBatchesForCurrentUser.length === 0 ? (
                 <View style={styles.card}><Text style={styles.text}>Нет партий для отображения.</Text></View>
               ) : (
-                filteredBatchesForCurrentUser.map((batch) => renderBatchCard(batch, 'list'))
+                BATCH_STATUS_ORDER.filter((status) => batchesByStatusForCurrentUser[status]?.length).map((status) => {
+                  const items = batchesByStatusForCurrentUser[status] || [];
+                  const isOpen = expandedBatchStatuses.includes(status);
+                  return (
+                    <View key={status} style={styles.card}>
+                      <Pressable style={styles.rowBetween} onPress={() => toggleBatchStatusGroup(status)}>
+                        <Text style={styles.cardTitle}>{status} ({items.length})</Text>
+                        <Text style={styles.text}>{isOpen ? '−' : '+'}</Text>
+                      </Pressable>
+                      {isOpen && items.map((batch) => renderBatchCard(batch, 'list'))}
+                    </View>
+                  );
+                })
               )}
             </View>
           )}
@@ -2388,15 +2434,15 @@ export default function App() {
                   {scheduleCandidates.map((employee) => (
                     <Pressable
                       key={employee.id}
-                      style={[styles.roleButton, shiftEmployeeName === employee.name && styles.roleButtonActive, !!editingShiftId && shiftEmployeeName !== employee.name && styles.disabledButton]}
-                      onPress={() => !editingShiftId && setShiftEmployeeName(employee.name)}
+                      style={[styles.roleButton, shiftEmployeeName === employee.name && styles.roleButtonActive]}
+                      onPress={() => setShiftEmployeeName(employee.name)}
                     >
                       <Text style={[styles.roleButtonText, shiftEmployeeName === employee.name && styles.roleButtonTextActive]}>{employee.name}</Text>
                     </Pressable>
                   ))}
                 </View>
                 <Pressable style={styles.primaryButton} onPress={createOrUpdateShift}><Text style={styles.primaryButtonText}>{editingShiftId ? 'Сохранить смену' : 'Сохранить смену'}</Text></Pressable>
-                {editingShiftId && <Pressable style={styles.secondaryButton} onPress={() => { setEditingShiftId(null); setShiftEmployeeName(''); setShiftDate(todayStr()); }}><Text style={styles.secondaryButtonText}>Отменить редактирование</Text></Pressable>}
+                {editingShiftId && <Pressable style={styles.secondaryButton} onPress={() => { setEditingShiftId(null); setShiftEmployeeName(''); setShiftDate(todayStr()); setWorkerShiftType('day'); }}><Text style={styles.secondaryButtonText}>Отменить редактирование</Text></Pressable>}
               </View>
 
               <View style={styles.card}>
@@ -2411,7 +2457,7 @@ export default function App() {
                         <Text style={styles.text}><Text style={styles.textBold}>{formatDisplayDate(shift.date)}</Text></Text>
                         <Text style={styles.text}>Сотрудник: {shift.employeeName}</Text>
                         <Text style={styles.text}>Тип: {shift.roleLabel || (shift.employeeType === 'worker' ? 'Рабочий' : 'Контролер')}{shift.employeeType === 'worker' ? ` (${shift.shiftType === 'night' ? 'Ночная' : 'Дневная'})` : ''}</Text>
-                        {(currentUser.role === 'Администратор' || shift.assignedBy === currentUser.id) && (currentUser.role === 'Производственный мастер' || currentUser.role === 'Контрольный мастер' || currentUser.role === 'Администратор') && (
+                        {(currentUser.role === 'Администратор' || (currentUser.role === 'Производственный мастер' && shift.employeeType === 'worker') || (currentUser.role === 'Контрольный мастер' && shift.employeeType === 'controller')) && (
                           <View style={styles.actionsWrap}>
                             <Pressable style={styles.secondaryButton} onPress={() => editShift(shift)}><Text style={styles.secondaryButtonText}>Редактировать</Text></Pressable>
                             <Pressable style={styles.dangerButton} onPress={() => deleteShift(shift)}><Text style={styles.dangerButtonText}>Удалить</Text></Pressable>
@@ -2428,15 +2474,14 @@ export default function App() {
             <View>
               <SectionTitle title="Панель администратора" />
               <View style={styles.card}>
-                <Text style={styles.cardTitle}>Пользователи</Text>
-                {editingUserId && (
-                  <View style={styles.cardSoft}>
+                <Text style={styles.cardTitle}>Пользователи системы</Text>
+                <View style={styles.cardSoft}>
                     <Label text="Имя" />
                     <TextInput style={styles.input} value={userForm.name} onChangeText={(value) => setUserForm((prev) => ({ ...prev, name: value }))} />
                     <Label text="Логин" />
                     <TextInput style={styles.input} value={userForm.login} onChangeText={(value) => setUserForm((prev) => ({ ...prev, login: value }))} />
-                    <Label text="Новый пароль" />
-                    <TextInput style={styles.input} value={userForm.password} onChangeText={(value) => setUserForm((prev) => ({ ...prev, password: value }))} placeholder="Оставьте пустым, чтобы не менять" placeholderTextColor={COLORS.muted} />
+                    <Label text={editingUserId ? 'Новый пароль' : 'Пароль'} />
+                    <TextInput style={styles.input} value={userForm.password} onChangeText={(value) => setUserForm((prev) => ({ ...prev, password: value }))} placeholder={editingUserId ? 'Оставьте пустым, чтобы не менять' : 'Введите пароль'} placeholderTextColor={COLORS.muted} />
                     <Label text="Роль" />
                     <View style={styles.roleRow}>
                       {(['Администратор', 'Производственный мастер', 'Контрольный мастер', 'Контролер'] as Role[]).map((role) => (
@@ -2446,13 +2491,12 @@ export default function App() {
                       ))}
                     </View>
                     <Pressable style={styles.primaryButton} onPress={saveUser}>
-                      <Text style={styles.primaryButtonText}>Сохранить пользователя</Text>
+                      <Text style={styles.primaryButtonText}>{editingUserId ? 'Сохранить пользователя' : 'Добавить пользователя'}</Text>
                     </Pressable>
                     <Pressable style={styles.secondaryButton} onPress={() => { setEditingUserId(null); setUserForm({ name: '', login: '', password: '', role: 'Контролер' }); }}>
-                      <Text style={styles.secondaryButtonText}>Отмена</Text>
+                      <Text style={styles.secondaryButtonText}>{editingUserId ? 'Отмена редактирования' : 'Очистить форму'}</Text>
                     </Pressable>
                   </View>
-                )}
                 {users.map((u) => (
                   <View key={u.id} style={styles.historyItem}>
                     <Text style={styles.text}><Text style={styles.textBold}>{u.name}</Text></Text>

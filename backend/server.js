@@ -32,6 +32,9 @@ async function runSchema() {
   await pool.query("ALTER TABLE batches ADD COLUMN IF NOT EXISTS assigned_shift_type TEXT DEFAULT 'day'");
   await pool.query("ALTER TABLE workers ADD COLUMN IF NOT EXISTS login VARCHAR(255) UNIQUE");
   await pool.query("ALTER TABLE workers ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)");
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS login VARCHAR(255)");
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)");
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(255)");
   await pool.query("ALTER TABLE inspection_defects ADD COLUMN IF NOT EXISTS review_status VARCHAR(50) DEFAULT 'На рассмотрении'");
 }
 
@@ -186,6 +189,35 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
+
+
+app.post('/api/users', async (req, res) => {
+  try {
+    const { full_name, login, password, role, editor_role } = req.body;
+    if (editor_role !== 'Администратор') {
+      return res.status(403).json({ ok: false, message: 'Только администратор может создавать пользователей' });
+    }
+    if (!full_name || !login || !password || !role) {
+      return res.status(400).json({ ok: false, message: 'Заполните имя, логин, пароль и роль' });
+    }
+    const allowedRoles = ['Администратор', 'Производственный мастер', 'Контрольный мастер', 'Контролер', 'admin', 'production_master', 'control_master', 'quality_master', 'controller'];
+    if (!allowedRoles.includes(role)) {
+      return res.status(400).json({ ok: false, message: 'Некорректная роль пользователя' });
+    }
+    const duplicate = await pool.query('SELECT id FROM users WHERE login = $1', [String(login).trim()]);
+    if (duplicate.rows.length > 0) {
+      return res.status(400).json({ ok: false, message: 'Пользователь с таким логином уже существует' });
+    }
+    const result = await pool.query(
+      'INSERT INTO users (full_name, login, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING *',
+      [String(full_name).trim(), String(login).trim(), String(password).trim(), role]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('CREATE USER ERROR:', error);
+    res.status(500).json({ ok: false, message: 'Не удалось создать пользователя' });
+  }
+});
 
 app.put('/api/users/:id', async (req, res) => {
   try {
@@ -646,22 +678,53 @@ app.put('/api/shifts/:id', async (req, res) => {
   try {
     const shiftId = toInt(req.params.id);
     const editorId = toInt(req.body.editor_id);
-    const { shift_date } = req.body;
+    const editorRole = req.body.editor_role;
+    const { shift_date, shift_type, employee_type, worker_id, user_id } = req.body;
     const shiftResult = await pool.query('SELECT * FROM shifts WHERE id = $1', [shiftId]);
     const shift = shiftResult.rows[0];
     if (!shift) return res.status(404).json({ ok: false, message: 'Смена не найдена' });
-    const editorRole = req.body.editor_role;
+
+    const nextEmployeeType = employee_type || shift.employee_type || (shift.user_id ? 'controller' : 'worker');
+    const nextWorkerId = nextEmployeeType === 'worker' ? toInt(worker_id) || shift.worker_id : null;
+    const nextUserId = nextEmployeeType === 'controller' ? toInt(user_id) || shift.user_id : null;
+    const nextShiftDate = shift_date || shift.shift_date;
+    const nextShiftType = shift_type || shift.shift_type || 'day';
+
     const isAdmin = editorRole === 'Администратор' || editorRole === 'admin';
-    if (!isAdmin && String(shift.assigned_by || '') !== String(editorId || '')) {
-      return res.status(403).json({ ok: false, message: 'Можно редактировать только свои смены' });
+    const isProductionMasterEditingWorker = editorRole === 'Производственный мастер' && nextEmployeeType === 'worker';
+    const isControlMasterEditingController = editorRole === 'Контрольный мастер' && nextEmployeeType === 'controller';
+    const isOwner = String(shift.assigned_by || '') === String(editorId || '');
+    if (!isAdmin && !isProductionMasterEditingWorker && !isControlMasterEditingController && !isOwner) {
+      return res.status(403).json({ ok: false, message: 'Нет прав на редактирование этой смены' });
     }
-    const duplicate = shift.employee_type === 'worker'
-      ? await pool.query('SELECT id FROM shifts WHERE employee_type = $1 AND worker_id = $2 AND shift_date = $3 AND id <> $4', [shift.employee_type, shift.worker_id, shift_date, shiftId])
-      : await pool.query('SELECT id FROM shifts WHERE employee_type = $1 AND user_id = $2 AND shift_date = $3 AND id <> $4', [shift.employee_type, shift.user_id, shift_date, shiftId]);
+    if (!nextShiftDate || !nextEmployeeType || (nextEmployeeType === 'worker' && !nextWorkerId) || (nextEmployeeType === 'controller' && !nextUserId)) {
+      return res.status(400).json({ ok: false, message: 'Заполните дату и сотрудника' });
+    }
+
+    const duplicate = nextEmployeeType === 'worker'
+      ? await pool.query('SELECT id FROM shifts WHERE employee_type = $1 AND worker_id = $2 AND shift_date = $3 AND id <> $4', [nextEmployeeType, nextWorkerId, nextShiftDate, shiftId])
+      : await pool.query('SELECT id FROM shifts WHERE employee_type = $1 AND user_id = $2 AND shift_date = $3 AND id <> $4', [nextEmployeeType, nextUserId, nextShiftDate, shiftId]);
     if (duplicate.rows.length > 0) {
-      return res.status(400).json({ ok: false, message: 'На эту дату уже есть такая смена' });
+      return res.status(400).json({ ok: false, message: 'На эту дату уже есть смена для выбранного сотрудника' });
     }
-    const result = await pool.query('UPDATE shifts SET shift_date = $1 WHERE id = $2 RETURNING *', [shift_date, shiftId]);
+
+    const employeeLookup = nextEmployeeType === 'worker'
+      ? await pool.query('SELECT full_name FROM workers WHERE id = $1', [nextWorkerId])
+      : await pool.query('SELECT full_name FROM users WHERE id = $1', [nextUserId]);
+    const employeeName = employeeLookup.rows[0]?.full_name || shift.employee_name || null;
+
+    const result = await pool.query(
+      `UPDATE shifts
+       SET worker_id = $1,
+           user_id = $2,
+           shift_date = $3,
+           shift_type = $4,
+           employee_type = $5,
+           employee_name = $6
+       WHERE id = $7
+       RETURNING *`,
+      [nextEmployeeType === 'worker' ? nextWorkerId : null, nextEmployeeType === 'controller' ? nextUserId : null, nextShiftDate, nextShiftType, nextEmployeeType, employeeName, shiftId]
+    );
     res.json(result.rows[0]);
   } catch (error) {
     console.error('UPDATE SHIFT ERROR:', error);
@@ -678,8 +741,11 @@ app.delete('/api/shifts/:id', async (req, res) => {
     const shift = shiftResult.rows[0];
     if (!shift) return res.status(404).json({ ok: false, message: 'Смена не найдена' });
     const isAdmin = editorRole === 'Администратор' || editorRole === 'admin';
-    if (!isAdmin && String(shift.assigned_by || '') !== String(editorId || '')) {
-      return res.status(403).json({ ok: false, message: 'Можно удалять только свои смены' });
+    const shiftEmployeeType = shift.employee_type || (shift.user_id ? 'controller' : 'worker');
+    const isProductionMasterDeletingWorker = editorRole === 'Производственный мастер' && shiftEmployeeType === 'worker';
+    const isControlMasterDeletingController = editorRole === 'Контрольный мастер' && shiftEmployeeType === 'controller';
+    if (!isAdmin && !isProductionMasterDeletingWorker && !isControlMasterDeletingController && String(shift.assigned_by || '') !== String(editorId || '')) {
+      return res.status(403).json({ ok: false, message: 'Нет прав на удаление этой смены' });
     }
     await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
     res.json({ ok: true });
