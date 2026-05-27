@@ -192,6 +192,8 @@ type ApiInspectionRow = {
 };
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://defect-control.onrender.com';
+const ICM_LOGO_FULL = require('./assets/icm-logo-full.png');
+const ICM_LOGO_MARK = require('./assets/icm-logo-mark.png');
 
 const COLORS = {
   bg: '#0f172a',
@@ -223,7 +225,6 @@ const monthNames: Record<string, string> = {
 
 const PRODUCT_OPTIONS = ['Втулка', 'Переходник', 'Удлинитель', 'Корпус'] as const;
 const DEFECT_STATUS_OPTIONS: DefectReviewStatus[] = ['Забраковано', 'На рассмотрении', 'Допущено до сборки'];
-const BATCH_STATUS_ORDER: BatchStatus[] = ['Создана', 'В процессе', 'Готова к проверке', 'Проверена', 'Готова к отправке', 'Отправлено на сборку'];
 type ProductOption = (typeof PRODUCT_OPTIONS)[number];
 
 
@@ -520,7 +521,7 @@ function StatusBadge({ status }: { status: BatchStatus }) {
 function TabButton({ title, active, onPress }: { title: string; active: boolean; onPress: () => void }) {
   return (
     <Pressable style={[styles.tabButton, active && styles.tabButtonActive]} onPress={onPress}>
-      <Text style={styles.tabButtonText}>{title}</Text>
+      <Text style={styles.tabButtonText} numberOfLines={1}>{title}</Text>
     </Pressable>
   );
 }
@@ -587,7 +588,6 @@ export default function App() {
   const [expandedArchiveMonths, setExpandedArchiveMonths] = useState<string[]>([]);
   const [showReportFromPicker, setShowReportFromPicker] = useState(false);
   const [showReportToPicker, setShowReportToPicker] = useState(false);
-  const [expandedBatchStatuses, setExpandedBatchStatuses] = useState<BatchStatus[]>(['В процессе', 'Готова к проверке', 'Проверена', 'Готова к отправке']);
 
   const controllers = useMemo(
     () => users.filter((user) => user.role === 'Контролер' || user.role === 'Контрольный мастер'),
@@ -733,27 +733,12 @@ export default function App() {
       return visibleBatchesPage.filter((b) => b.assignedWorkerId === currentUser.id);
     }
     if (currentUser.role === 'Контролер' || currentUser.role === 'Контрольный мастер') {
-      return visibleBatchesPage.filter((b) =>
-        ['В процессе', 'Готова к проверке', 'Проверена', 'Готова к отправке'].includes(b.status)
+      return visibleBatchesPage.filter(
+        (b) => b.status === 'Готова к проверке' || b.status === 'Проверена' || (!b.acceptedByUserId || b.acceptedByUserId === currentUser.id),
       );
     }
     return visibleBatchesPage;
   }, [visibleBatchesPage, currentUser]);
-
-  const batchesByStatusForCurrentUser = useMemo(() => {
-    const grouped = BATCH_STATUS_ORDER.reduce((acc, status) => {
-      const items = filteredBatchesForCurrentUser.filter((batch) => batch.status === status);
-      if (items.length > 0) acc[status] = items;
-      return acc;
-    }, {} as Record<BatchStatus, Batch[]>);
-    return grouped;
-  }, [filteredBatchesForCurrentUser]);
-
-  const toggleBatchStatusGroup = (status: BatchStatus) => {
-    setExpandedBatchStatuses((prev) =>
-      prev.includes(status) ? prev.filter((item) => item !== status) : [...prev, status],
-    );
-  };
 
   const visibleShifts = useMemo(
     () => shifts
@@ -938,7 +923,6 @@ export default function App() {
         if (raw) {
           const user = JSON.parse(raw) as User;
           setCurrentUser(user);
-          if (user.role === 'Рабочий') setScreen('batches');
         }
       } catch {}
     })();
@@ -985,12 +969,6 @@ export default function App() {
     }
   }, [currentUser, acceptedBatchForCurrentUser, selectedBatchId]);
 
-  useEffect(() => {
-    if (currentUser?.role === 'Рабочий' && screen === 'dashboard') {
-      setScreen('batches');
-    }
-  }, [currentUser, screen]);
-
   const handleLogin = async () => {
     try {
       const response = await fetch(`${API_URL}/auth/login`, {
@@ -1012,7 +990,7 @@ export default function App() {
       };
       setCurrentUser(nextUser);
       await AsyncStorage.setItem('lizun_current_user', JSON.stringify(nextUser));
-      setScreen(nextUser.role === 'Рабочий' ? 'batches' : 'dashboard');
+      setScreen('dashboard');
       await syncAllFromServer();
     } catch {
       Alert.alert('Ошибка', `Не удалось подключиться к серверу ${API_URL}`);
@@ -1507,16 +1485,10 @@ export default function App() {
   };
 
   const saveUser = async () => {
-    if (!currentUser) return;
-    if (!userForm.name.trim() || !userForm.login.trim() || (!editingUserId && !userForm.password.trim())) {
-      Alert.alert('Ошибка', editingUserId ? 'Заполните имя, логин и роль' : 'Заполните имя, логин, пароль и роль');
-      return;
-    }
+    if (!currentUser || !editingUserId) return;
     try {
-      const url = editingUserId ? `${API_URL}/api/users/${editingUserId}` : `${API_URL}/api/users`;
-      const method = editingUserId ? 'PUT' : 'POST';
-      const response = await fetch(url, {
-        method,
+      const response = await fetch(`${API_URL}/api/users/${editingUserId}`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           full_name: userForm.name.trim(),
@@ -1528,15 +1500,15 @@ export default function App() {
       });
       const data = await readJson(response);
       if (!response.ok) {
-        Alert.alert('Ошибка', data?.message || (editingUserId ? 'Не удалось обновить пользователя' : 'Не удалось создать пользователя'));
+        Alert.alert('Ошибка', data?.message || 'Не удалось обновить пользователя');
         return;
       }
       await syncAllFromServer();
       setEditingUserId(null);
       setUserForm({ name: '', login: '', password: '', role: 'Контролер' });
-      Alert.alert('Готово', editingUserId ? 'Пользователь обновлен' : 'Пользователь создан');
+      Alert.alert('Готово', 'Пользователь обновлен');
     } catch {
-      Alert.alert('Ошибка', editingUserId ? 'Не удалось обновить пользователя' : 'Не удалось создать пользователя');
+      Alert.alert('Ошибка', 'Не удалось обновить пользователя');
     }
   };
 
@@ -1651,13 +1623,10 @@ export default function App() {
 
     try {
       if (editingShiftId) {
-        const editBody = selectedScheduleEmployeeType === 'worker'
-          ? { worker_id: Number((selectedEmployee as Worker).id), shift_date: shiftDate, shift_type: workerShiftType, employee_type: 'worker', editor_id: Number(currentUser.id), editor_role: currentUser.role }
-          : { user_id: Number((selectedEmployee as User).id), shift_date: shiftDate, shift_type: 'day', employee_type: 'controller', editor_id: Number(currentUser.id), editor_role: currentUser.role };
         const response = await fetch(`${API_URL}/api/shifts/${editingShiftId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(editBody),
+          body: JSON.stringify({ shift_date: shiftDate, editor_id: Number(currentUser.id) }),
         });
         const data = await readJson(response);
         if (!response.ok) {
@@ -1699,7 +1668,6 @@ export default function App() {
     setShiftDate(shift.date);
     setShiftEmployeeName(shift.employeeName);
     setAdminScheduleType(shift.employeeType);
-    setWorkerShiftType((shift.shiftType as 'day' | 'night') || 'day');
     setScreen('schedule');
   };
 
@@ -1798,13 +1766,13 @@ export default function App() {
         </View>
         <Text style={styles.text}>Номер партии: {batch.batchNumber}</Text>
         <Text style={styles.text}>Дата: {formatDisplayDate(mode === 'report' && batch.sentToAssemblyAt ? batch.sentToAssemblyAt : batch.manufactureDate)}</Text>
-        {(mode !== 'report' || isExpandedReportCard) && (
+        {(mode !== 'report' || batch.status === 'Готова к отправке' || isExpandedReportCard) && (
           <>
             <Text style={styles.text}>Количество: {batch.quantity}</Text>
             <Text style={styles.text}>Работник: {batch.workerName || 'Не назначен'}</Text>
             {!!batch.workerShiftType && <Text style={styles.text}>Смена: {batch.workerShiftType === 'night' ? 'Ночная' : 'Дневная'}</Text>}
             {mode === 'report' && batch.sentToAssemblyAt && isExpandedReportCard && <Text style={styles.text}>Отправлена: {formatDisplayDate(batch.sentToAssemblyAt)}</Text>}
-            {inspection && (mode !== 'report' || isExpandedReportCard) && renderInspectionPreview(inspection)}
+            {inspection && (mode !== 'report' || isExpandedReportCard || batch.status === 'Готова к отправке') && renderInspectionPreview(inspection)}
           </>
         )}
 
@@ -1881,7 +1849,7 @@ export default function App() {
           </Pressable>
         )}
 
-        {mode === 'report' && isExpandedReportCard && canSendToAssembly && (
+        {mode === 'report' && canSendToAssembly && (
           <Pressable style={styles.primaryButton} onPress={() => sendBatchToAssembly(batch)}>
             <Text style={styles.primaryButtonText}>Отправить на сборку</Text>
           </Pressable>
@@ -1950,8 +1918,8 @@ export default function App() {
       <SafeAreaView style={styles.safeArea}>
         <ScrollView contentContainerStyle={styles.container}>
           <View style={styles.phone}>
-            <View style={styles.headerBlock}>
-              <Text style={styles.title}>ИЦМ</Text>
+            <View style={styles.loginHeaderBlock}>
+              <Image source={ICM_LOGO_FULL} style={styles.loginLogo} resizeMode="contain" />
             </View>
             <View style={styles.card}>
               <Label text="Логин" />
@@ -1973,9 +1941,12 @@ export default function App() {
       <ScrollView contentContainerStyle={styles.container}>
         <View style={styles.phone}>
           <View style={styles.topBar}>
-            <View>
-              <Text style={styles.topRole}>{currentUser.role}</Text>
-              <Text style={styles.topName}>{currentUser.name}</Text>
+            <View style={styles.userIdentity}>
+              <Image source={ICM_LOGO_MARK} style={styles.topLogoMark} resizeMode="contain" />
+              <View style={styles.userIdentityText}>
+                <Text style={styles.topRole}>{currentUser.role}</Text>
+                <Text style={styles.topName}>{currentUser.name}</Text>
+              </View>
             </View>
             <Pressable style={styles.iconButton} onPress={handleLogout}>
               <Text style={styles.iconButtonText}>↩</Text>
@@ -1983,7 +1954,7 @@ export default function App() {
           </View>
 
           <View style={styles.navRow}>
-            {currentUser.role !== 'Рабочий' && <TabButton title="Главная" active={screen === 'dashboard'} onPress={() => setScreen('dashboard')} />}
+            <TabButton title="Главная" active={screen === 'dashboard'} onPress={() => setScreen('dashboard')} />
             <TabButton title="Партии" active={screen === 'batches'} onPress={() => setScreen('batches')} />
             {showInspectionTab && <TabButton title="Контроль" active={screen === 'inspection'} onPress={() => setScreen('inspection')} />}
             <TabButton title="Отчёты" active={screen === 'report'} onPress={() => setScreen('report')} />
@@ -2083,19 +2054,7 @@ export default function App() {
               {filteredBatchesForCurrentUser.length === 0 ? (
                 <View style={styles.card}><Text style={styles.text}>Нет партий для отображения.</Text></View>
               ) : (
-                BATCH_STATUS_ORDER.filter((status) => batchesByStatusForCurrentUser[status]?.length).map((status) => {
-                  const items = batchesByStatusForCurrentUser[status] || [];
-                  const isOpen = expandedBatchStatuses.includes(status);
-                  return (
-                    <View key={status} style={styles.card}>
-                      <Pressable style={styles.rowBetween} onPress={() => toggleBatchStatusGroup(status)}>
-                        <Text style={styles.cardTitle}>{status} ({items.length})</Text>
-                        <Text style={styles.text}>{isOpen ? '−' : '+'}</Text>
-                      </Pressable>
-                      {isOpen && items.map((batch) => renderBatchCard(batch, 'list'))}
-                    </View>
-                  );
-                })
+                filteredBatchesForCurrentUser.map((batch) => renderBatchCard(batch, 'list'))
               )}
             </View>
           )}
@@ -2434,15 +2393,15 @@ export default function App() {
                   {scheduleCandidates.map((employee) => (
                     <Pressable
                       key={employee.id}
-                      style={[styles.roleButton, shiftEmployeeName === employee.name && styles.roleButtonActive]}
-                      onPress={() => setShiftEmployeeName(employee.name)}
+                      style={[styles.roleButton, shiftEmployeeName === employee.name && styles.roleButtonActive, !!editingShiftId && shiftEmployeeName !== employee.name && styles.disabledButton]}
+                      onPress={() => !editingShiftId && setShiftEmployeeName(employee.name)}
                     >
                       <Text style={[styles.roleButtonText, shiftEmployeeName === employee.name && styles.roleButtonTextActive]}>{employee.name}</Text>
                     </Pressable>
                   ))}
                 </View>
                 <Pressable style={styles.primaryButton} onPress={createOrUpdateShift}><Text style={styles.primaryButtonText}>{editingShiftId ? 'Сохранить смену' : 'Сохранить смену'}</Text></Pressable>
-                {editingShiftId && <Pressable style={styles.secondaryButton} onPress={() => { setEditingShiftId(null); setShiftEmployeeName(''); setShiftDate(todayStr()); setWorkerShiftType('day'); }}><Text style={styles.secondaryButtonText}>Отменить редактирование</Text></Pressable>}
+                {editingShiftId && <Pressable style={styles.secondaryButton} onPress={() => { setEditingShiftId(null); setShiftEmployeeName(''); setShiftDate(todayStr()); }}><Text style={styles.secondaryButtonText}>Отменить редактирование</Text></Pressable>}
               </View>
 
               <View style={styles.card}>
@@ -2457,7 +2416,7 @@ export default function App() {
                         <Text style={styles.text}><Text style={styles.textBold}>{formatDisplayDate(shift.date)}</Text></Text>
                         <Text style={styles.text}>Сотрудник: {shift.employeeName}</Text>
                         <Text style={styles.text}>Тип: {shift.roleLabel || (shift.employeeType === 'worker' ? 'Рабочий' : 'Контролер')}{shift.employeeType === 'worker' ? ` (${shift.shiftType === 'night' ? 'Ночная' : 'Дневная'})` : ''}</Text>
-                        {(currentUser.role === 'Администратор' || (currentUser.role === 'Производственный мастер' && shift.employeeType === 'worker') || (currentUser.role === 'Контрольный мастер' && shift.employeeType === 'controller')) && (
+                        {(currentUser.role === 'Администратор' || shift.assignedBy === currentUser.id) && (currentUser.role === 'Производственный мастер' || currentUser.role === 'Контрольный мастер' || currentUser.role === 'Администратор') && (
                           <View style={styles.actionsWrap}>
                             <Pressable style={styles.secondaryButton} onPress={() => editShift(shift)}><Text style={styles.secondaryButtonText}>Редактировать</Text></Pressable>
                             <Pressable style={styles.dangerButton} onPress={() => deleteShift(shift)}><Text style={styles.dangerButtonText}>Удалить</Text></Pressable>
@@ -2474,14 +2433,15 @@ export default function App() {
             <View>
               <SectionTitle title="Панель администратора" />
               <View style={styles.card}>
-                <Text style={styles.cardTitle}>Пользователи системы</Text>
-                <View style={styles.cardSoft}>
+                <Text style={styles.cardTitle}>Пользователи</Text>
+                {editingUserId && (
+                  <View style={styles.cardSoft}>
                     <Label text="Имя" />
                     <TextInput style={styles.input} value={userForm.name} onChangeText={(value) => setUserForm((prev) => ({ ...prev, name: value }))} />
                     <Label text="Логин" />
                     <TextInput style={styles.input} value={userForm.login} onChangeText={(value) => setUserForm((prev) => ({ ...prev, login: value }))} />
-                    <Label text={editingUserId ? 'Новый пароль' : 'Пароль'} />
-                    <TextInput style={styles.input} value={userForm.password} onChangeText={(value) => setUserForm((prev) => ({ ...prev, password: value }))} placeholder={editingUserId ? 'Оставьте пустым, чтобы не менять' : 'Введите пароль'} placeholderTextColor={COLORS.muted} />
+                    <Label text="Новый пароль" />
+                    <TextInput style={styles.input} value={userForm.password} onChangeText={(value) => setUserForm((prev) => ({ ...prev, password: value }))} placeholder="Оставьте пустым, чтобы не менять" placeholderTextColor={COLORS.muted} />
                     <Label text="Роль" />
                     <View style={styles.roleRow}>
                       {(['Администратор', 'Производственный мастер', 'Контрольный мастер', 'Контролер'] as Role[]).map((role) => (
@@ -2491,12 +2451,13 @@ export default function App() {
                       ))}
                     </View>
                     <Pressable style={styles.primaryButton} onPress={saveUser}>
-                      <Text style={styles.primaryButtonText}>{editingUserId ? 'Сохранить пользователя' : 'Добавить пользователя'}</Text>
+                      <Text style={styles.primaryButtonText}>Сохранить пользователя</Text>
                     </Pressable>
                     <Pressable style={styles.secondaryButton} onPress={() => { setEditingUserId(null); setUserForm({ name: '', login: '', password: '', role: 'Контролер' }); }}>
-                      <Text style={styles.secondaryButtonText}>{editingUserId ? 'Отмена редактирования' : 'Очистить форму'}</Text>
+                      <Text style={styles.secondaryButtonText}>Отмена</Text>
                     </Pressable>
                   </View>
+                )}
                 {users.map((u) => (
                   <View key={u.id} style={styles.historyItem}>
                     <Text style={styles.text}><Text style={styles.textBold}>{u.name}</Text></Text>
@@ -2558,18 +2519,23 @@ export default function App() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#020617' },
-  container: { padding: 16, alignItems: 'center' },
-  phone: { width: '100%', maxWidth: 520, backgroundColor: COLORS.bg, borderRadius: 24, padding: 16, minHeight: '100%' },
+  container: { paddingHorizontal: 12, paddingVertical: 16, alignItems: 'center' },
+  phone: { width: '100%', maxWidth: 560, backgroundColor: COLORS.bg, borderRadius: 24, padding: 16, minHeight: '100%' },
   headerBlock: { marginBottom: 18 },
   title: { color: COLORS.text, fontSize: 30, fontWeight: '800' },
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  loginHeaderBlock: { width: '100%', alignItems: 'center', marginBottom: 18, marginTop: 4 },
+  loginLogo: { width: '86%', maxWidth: 360, height: 180 },
+  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
+  userIdentity: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  userIdentityText: { flex: 1, minWidth: 0 },
+  topLogoMark: { width: 44, height: 44 },
   topRole: { color: COLORS.accent2, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 },
   topName: { color: COLORS.text, fontSize: 20, fontWeight: '700', marginTop: 2 },
-  navRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 16, marginBottom: 18 },
-  tabButton: { backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, marginRight: 8, marginBottom: 8 },
+  navRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 16, marginBottom: 18 },
+  tabButton: { flexGrow: 1, flexBasis: '30%', minWidth: 112, minHeight: 52, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
   tabButtonActive: { backgroundColor: '#1d4ed8' },
-  tabButtonText: { color: COLORS.text, fontWeight: '600' },
-  card: { backgroundColor: COLORS.card, borderRadius: 18, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: COLORS.border },
+  tabButtonText: { color: COLORS.text, fontWeight: '700', textAlign: 'center' },
+  card: { width: '100%', backgroundColor: COLORS.card, borderRadius: 18, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: COLORS.border },
   cardSoft: { backgroundColor: '#162033', borderRadius: 14, padding: 12, marginTop: 12, borderWidth: 1, borderColor: COLORS.border },
   cardTitle: { color: COLORS.text, fontSize: 18, fontWeight: '700', marginBottom: 10 },
   cardSubTitle: { color: COLORS.text, fontSize: 16, fontWeight: '700', marginBottom: 8, marginTop: 8 },
@@ -2578,35 +2544,35 @@ const styles = StyleSheet.create({
   label: { color: COLORS.muted, fontSize: 13, marginTop: 8, marginBottom: 6 },
   input: { width: '100%', backgroundColor: '#0b1220', color: COLORS.text, borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 8 },
   textarea: { width: '100%', minHeight: 88, backgroundColor: '#0b1220', color: COLORS.text, borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 8, textAlignVertical: 'top' },
-  primaryButton: { width: '100%', backgroundColor: COLORS.accent, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, marginTop: 8, alignItems: 'center' },
-  primaryButtonText: { color: '#052e16', fontWeight: '800' },
-  secondaryButton: { backgroundColor: COLORS.soft, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14, alignItems: 'center', marginRight: 8, marginBottom: 8 },
-  secondaryButtonText: { color: COLORS.text, fontWeight: '700' },
+  primaryButton: { width: '100%', minHeight: 52, backgroundColor: COLORS.accent, borderRadius: 16, paddingVertical: 13, paddingHorizontal: 16, marginTop: 10, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch' },
+  primaryButtonText: { color: '#052e16', fontWeight: '800', textAlign: 'center', fontSize: 15, lineHeight: 20 },
+  secondaryButton: { width: '100%', minHeight: 50, backgroundColor: COLORS.soft, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch', marginTop: 8 },
+  secondaryButtonText: { color: COLORS.text, fontWeight: '700', textAlign: 'center', fontSize: 15, lineHeight: 20 },
   iconButton: { width: 44, height: 44, backgroundColor: COLORS.soft, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   iconButtonText: { color: COLORS.text, fontSize: 20, fontWeight: '800' },
   smallCloseButton: { width: 44, height: 44, backgroundColor: COLORS.soft, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   smallCloseButtonText: { color: COLORS.text, fontSize: 28, fontWeight: '700', lineHeight: 28 },
-  dangerButton: { backgroundColor: '#7f1d1d', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14, alignItems: 'center', marginRight: 8, marginBottom: 8 },
-  dangerButtonText: { color: '#fee2e2', fontWeight: '700' },
+  dangerButton: { width: '100%', minHeight: 50, backgroundColor: '#7f1d1d', borderRadius: 14, paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch', marginTop: 8 },
+  dangerButtonText: { color: '#fee2e2', fontWeight: '700', textAlign: 'center', fontSize: 15, lineHeight: 20 },
   sectionTitle: { color: COLORS.text, fontSize: 22, fontWeight: '700', marginBottom: 12 },
-  grid2: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 14 },
-  statCard: { width: '48%', backgroundColor: COLORS.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: COLORS.border, marginRight: '2%', marginBottom: 10 },
+  grid2: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 14 },
+  statCard: { flexGrow: 1, flexBasis: '45%', minWidth: 150, backgroundColor: COLORS.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: COLORS.border },
   statValue: { fontSize: 28, fontWeight: '800', color: COLORS.accent2 },
   statTitle: { marginTop: 6, color: COLORS.muted, fontSize: 13 },
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   inspectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   badge: { borderRadius: 999, paddingVertical: 6, paddingHorizontal: 10, marginLeft: 8 },
   badgeText: { color: 'white', fontSize: 12, fontWeight: '700' },
-  actionsWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 12, gap: 8 },
+  actionsWrap: { width: '100%', flexDirection: 'column', marginTop: 12, gap: 8, alignItems: 'stretch' },
   aiBox: { backgroundColor: '#082f49', borderWidth: 1, borderColor: '#0ea5e9', borderRadius: 14, padding: 12, marginTop: 12, marginBottom: 12 },
   historyItem: { borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: 10, marginTop: 10 },
   previewBox: { backgroundColor: '#0b1220', borderWidth: 1, borderColor: COLORS.border, borderRadius: 14, padding: 12, marginBottom: 12 },
   imagePreview: { width: '100%', height: 260, borderRadius: 12, marginBottom: 12, backgroundColor: '#000' },
   imagePreviewSmall: { width: '100%', height: 180, borderRadius: 10, marginTop: 8, marginBottom: 8, backgroundColor: '#000' },
-  roleRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8, marginTop: 4 },
-  roleButton: { backgroundColor: '#0b1220', borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, marginRight: 8, marginBottom: 8 },
+  roleRow: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8, marginTop: 4 },
+  roleButton: { flexGrow: 1, flexBasis: '45%', minWidth: 120, minHeight: 48, backgroundColor: '#0b1220', borderWidth: 1, borderColor: COLORS.border, borderRadius: 14, paddingVertical: 11, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
   roleButtonActive: { backgroundColor: COLORS.accent2, borderColor: COLORS.accent2 },
-  roleButtonText: { color: COLORS.text, fontWeight: '600' },
+  roleButtonText: { color: COLORS.text, fontWeight: '700', textAlign: 'center', fontSize: 14, lineHeight: 19 },
   roleButtonTextActive: { color: '#082f49', fontWeight: '800' },
   disabledButton: { opacity: 0.55 },
   datePickerButton: { width: '100%', backgroundColor: '#0b1220', borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 14, marginBottom: 8 },
@@ -2615,8 +2581,8 @@ const styles = StyleSheet.create({
   cameraPreview: { flex: 1 },
   cameraOverlay: { flex: 1, justifyContent: 'space-between', padding: 20, backgroundColor: 'rgba(0,0,0,0.15)' },
   cameraTitle: { color: 'white', fontSize: 20, fontWeight: '700', marginTop: 20 },
-  cameraActions: { marginBottom: 24 },
-  captureButton: { backgroundColor: 'white', borderRadius: 16, paddingVertical: 14, alignItems: 'center', marginBottom: 12 },
+  cameraActions: { width: '100%', gap: 10, marginBottom: 24 },
+  captureButton: { width: '100%', minHeight: 54, backgroundColor: 'white', borderRadius: 16, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch' },
   captureButtonText: { color: '#111827', fontWeight: '800', fontSize: 16 },
   warningCard: { borderColor: '#f59e0b', backgroundColor: '#451a03' },
   warningText: { color: '#fde68a', fontWeight: '600', lineHeight: 20 },
@@ -2626,10 +2592,10 @@ const styles = StyleSheet.create({
   dropdownItemActive: { backgroundColor: '#1e3a8a' },
   dropdownItemText: { color: COLORS.text, fontSize: 15, fontWeight: '600' },
   dropdownItemTextActive: { color: '#dbeafe' },
-  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  filterChip: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: '#0b1220', borderWidth: 1, borderColor: COLORS.border, marginBottom: 8 },
+  filterRow: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  filterChip: { flexGrow: 1, flexBasis: '45%', minWidth: 130, minHeight: 42, paddingVertical: 9, paddingHorizontal: 12, borderRadius: 999, backgroundColor: '#0b1220', borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
   filterChipActive: { backgroundColor: COLORS.accent2, borderColor: COLORS.accent2 },
-  filterChipText: { color: COLORS.text, fontWeight: '600', fontSize: 12 },
+  filterChipText: { color: COLORS.text, fontWeight: '700', fontSize: 12, textAlign: 'center' },
   filterChipTextActive: { color: '#082f49', fontWeight: '800' },
   defectItemTitle: { color: COLORS.accent2, fontSize: 20, fontWeight: '700', textDecorationLine: 'underline', marginBottom: 4 },
 });
