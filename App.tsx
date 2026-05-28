@@ -586,6 +586,7 @@ export default function App() {
   const [reportDateTo, setReportDateTo] = useState('');
   const [reportDefectStatus, setReportDefectStatus] = useState<'Все' | DefectReviewStatus>('Все');
   const [showDefectStatusMenu, setShowDefectStatusMenu] = useState(false);
+  const [showReportStatusMenu, setShowReportStatusMenu] = useState(false);
   const [expandedArchiveMonths, setExpandedArchiveMonths] = useState<string[]>([]);
   const [showReportFromPicker, setShowReportFromPicker] = useState(false);
   const [showReportToPicker, setShowReportToPicker] = useState(false);
@@ -2234,12 +2235,34 @@ export default function App() {
             <View>
               <SectionTitle title="Отчёты" />
 
-              <View style={styles.card}>
-                <Text style={styles.cardTitle}>Фильтр</Text>
-                <Label text="Дата от" />
-                <Pressable style={styles.datePickerButton} onPress={() => setShowReportFromPicker(true)}>
-                  <Text style={styles.datePickerButtonText}>{reportDateFrom ? formatDisplayDate(reportDateFrom) : 'Выбрать дату'}</Text>
-                </Pressable>
+              <View style={[styles.card, styles.reportFilterCard]}>
+                <View style={styles.filterHeaderRow}>
+                  <Text style={[styles.cardTitle, styles.filterTitle]}>Фильтр</Text>
+                  <Pressable style={styles.filterResetButton} onPress={resetReportFilters}>
+                    <Text style={styles.filterResetButtonText}>Сбросить</Text>
+                  </Pressable>
+                </View>
+
+                <View style={styles.filterDateRow}>
+                  <View style={styles.filterField}>
+                    <Text style={styles.compactLabel}>Дата от</Text>
+                    <Pressable style={styles.compactPickerButton} onPress={() => setShowReportFromPicker(true)}>
+                      <Text style={styles.compactPickerButtonText} numberOfLines={1}>
+                        {reportDateFrom ? formatDisplayDate(reportDateFrom) : 'Выбрать'}
+                      </Text>
+                    </Pressable>
+                  </View>
+
+                  <View style={styles.filterField}>
+                    <Text style={styles.compactLabel}>Дата до</Text>
+                    <Pressable style={styles.compactPickerButton} onPress={() => setShowReportToPicker(true)}>
+                      <Text style={styles.compactPickerButtonText} numberOfLines={1}>
+                        {reportDateTo ? formatDisplayDate(reportDateTo) : 'Выбрать'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+
                 {showReportFromPicker && (
                   <DateTimePicker
                     value={reportDateFrom ? new Date(reportDateFrom) : new Date()}
@@ -2248,10 +2271,7 @@ export default function App() {
                     onChange={onChangeReportFromDate}
                   />
                 )}
-                <Label text="Дата до" />
-                <Pressable style={styles.datePickerButton} onPress={() => setShowReportToPicker(true)}>
-                  <Text style={styles.datePickerButtonText}>{reportDateTo ? formatDisplayDate(reportDateTo) : 'Выбрать дату'}</Text>
-                </Pressable>
+
                 {showReportToPicker && (
                   <DateTimePicker
                     value={reportDateTo ? new Date(reportDateTo) : new Date()}
@@ -2260,18 +2280,46 @@ export default function App() {
                     onChange={onChangeReportToDate}
                   />
                 )}
-                <Label text="Статус брака" />
-                <View style={styles.filterRow}>
-                  {(['Все', ...DEFECT_STATUS_OPTIONS] as const).map((status) => (
-                    <Pressable key={status} style={[styles.filterChip, reportDefectStatus === status && styles.filterChipActive]} onPress={() => setReportDefectStatus(status as any)}>
-                      <Text style={[styles.filterChipText, reportDefectStatus === status && styles.filterChipTextActive]}>{status}</Text>
-                    </Pressable>
-                  ))}
+
+                <View style={styles.filterStatusRow}>
+                  <Text style={styles.compactLabel}>Статус брака</Text>
+                  <Pressable style={styles.filterStatusButton} onPress={() => setShowReportStatusMenu(true)}>
+                    <Text style={styles.filterStatusButtonText} numberOfLines={1}>
+                      {reportDefectStatus}
+                    </Text>
+                    <Text style={styles.filterStatusChevron}>⌄</Text>
+                  </Pressable>
                 </View>
-                <Pressable style={styles.secondaryButton} onPress={resetReportFilters}>
-                  <Text style={styles.secondaryButtonText}>Сбросить фильтр</Text>
-                </Pressable>
               </View>
+
+              <Modal
+                visible={showReportStatusMenu}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowReportStatusMenu(false)}
+              >
+                <Pressable style={styles.modalOverlay} onPress={() => setShowReportStatusMenu(false)}>
+                  <Pressable style={styles.modalCard} onPress={() => {}}>
+                    <Text style={styles.modalTitle}>Статус брака</Text>
+                    <View style={styles.dropdownMenu}>
+                      {(['Все', ...DEFECT_STATUS_OPTIONS] as const).map((status) => (
+                        <Pressable
+                          key={status}
+                          style={[styles.dropdownItem, reportDefectStatus === status && styles.dropdownItemActive]}
+                          onPress={() => {
+                            setReportDefectStatus(status as any);
+                            setShowReportStatusMenu(false);
+                          }}
+                        >
+                          <Text style={[styles.dropdownItemText, reportDefectStatus === status && styles.dropdownItemTextActive]}>
+                            {status}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </Pressable>
+                </Pressable>
+              </Modal>
 
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Готовы к отправке</Text>
@@ -2640,10 +2688,37 @@ const styles = StyleSheet.create({
   topLogoMark: { width: 44, height: 44 },
   topRole: { color: COLORS.accent2, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 },
   topName: { color: COLORS.text, fontSize: 20, fontWeight: '700', marginTop: 2 },
-  navRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 16, marginBottom: 18 },
-  tabButton: { flexGrow: 1, flexBasis: '30%', minWidth: 112, minHeight: 52, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
-  tabButtonActive: { backgroundColor: '#1d4ed8' },
-  tabButtonText: { color: COLORS.text, fontWeight: '700', textAlign: 'center' },
+  navRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
+    marginTop: 14,
+    marginBottom: 18,
+    gap: 8,
+  },
+  tabButton: {
+    width: '31.7%',
+    minHeight: 44,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabButtonActive: {
+    backgroundColor: '#1d4ed8',
+    borderColor: '#2563eb',
+  },
+  tabButtonText: {
+    color: COLORS.text,
+    fontWeight: '700',
+    fontSize: 13,
+    textAlign: 'center',
+  },
   card: { width: '100%', backgroundColor: COLORS.card, borderRadius: 18, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: COLORS.border },
   cardSoft: { backgroundColor: '#162033', borderRadius: 14, padding: 12, marginTop: 12, borderWidth: 1, borderColor: COLORS.border },
   cardTitle: { color: COLORS.text, fontSize: 18, fontWeight: '700', marginBottom: 10 },
@@ -2664,10 +2739,10 @@ const styles = StyleSheet.create({
   dangerButton: { alignSelf: 'flex-start', backgroundColor: '#6b2020', borderRadius: 12, paddingVertical: 9, paddingHorizontal: 12, alignItems: 'center', marginRight: 8, marginBottom: 8 },
   dangerButtonText: { color: '#fee2e2', fontWeight: '700', textAlign: 'center', fontSize: 15, lineHeight: 20 },
   sectionTitle: { color: COLORS.text, fontSize: 22, fontWeight: '700', marginBottom: 12 },
-  grid2: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 14 },
-  statCard: { width: '48%', minHeight: 132, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.card, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: COLORS.border, marginBottom: 10 },
-  statValue: { fontSize: 32, fontWeight: '800', color: COLORS.accent2, textAlign: 'center' },
-  statTitle: { marginTop: 8, color: COLORS.muted, fontSize: 15, fontWeight: '700', textAlign: 'center' },
+  grid2: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-start', gap: 8, marginBottom: 14 },
+  statCard: { width: '31.7%', minHeight: 96, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.card, borderRadius: 14, paddingVertical: 10, paddingHorizontal: 6, borderWidth: 1, borderColor: COLORS.border },
+  statValue: { fontSize: 26, fontWeight: '800', color: COLORS.accent2, textAlign: 'center', lineHeight: 30 },
+  statTitle: { marginTop: 5, color: COLORS.muted, fontSize: 12, lineHeight: 15, fontWeight: '700', textAlign: 'center' },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   inspectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   badge: { borderRadius: 999, paddingVertical: 6, paddingHorizontal: 10, marginLeft: 8 },
