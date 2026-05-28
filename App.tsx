@@ -193,7 +193,6 @@ type ApiInspectionRow = {
 };
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://defect-control.onrender.com';
-const ICM_LOGO_FULL = require('./assets/icm-logo-full.png');
 const ICM_LOGO_MARK = require('./assets/icm-logo-mark.png');
 
 const COLORS = {
@@ -490,14 +489,12 @@ function SectionTitle({ title }: { title: string }) {
   return <Text style={styles.sectionTitle}>{title}</Text>;
 }
 
-function StatCard({ title, value, onPress }: { title: string; value: string; onPress?: () => void }) {
-  const Wrapper: React.ElementType = onPress ? Pressable : View;
-
+function StatCard({ title, value }: { title: string; value: string }) {
   return (
-    <Wrapper style={[styles.statCard, onPress && styles.statCardPressable]} onPress={onPress}>
+    <View style={styles.statCard}>
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statTitle}>{title}</Text>
-    </Wrapper>
+    </View>
   );
 }
 
@@ -1015,32 +1012,6 @@ export default function App() {
 
   const chooseProductName = () => {
     setShowProductMenu((prev) => !prev);
-  };
-
-  const navigateFromStatCard = (target: 'total' | 'created' | 'inProcess' | 'readyCheck' | 'checked' | 'readyToSend') => {
-    if (!currentUser) return;
-
-    if (target === 'readyToSend') {
-      setReportSelectedBatchId(null);
-      setScreen('report');
-      return;
-    }
-
-    setScreen('batches');
-
-    if (target === 'total') {
-      setExpandedBatchStatuses(['Создана', 'В процессе', 'Готова к проверке', 'Проверена', 'Готова к отправке']);
-      return;
-    }
-
-    const statusMap: Record<Exclude<typeof target, 'total' | 'readyToSend'>, BatchStatus> = {
-      created: 'Создана',
-      inProcess: 'В процессе',
-      readyCheck: 'Готова к проверке',
-      checked: 'Проверена',
-    };
-
-    setExpandedBatchStatuses([statusMap[target]]);
   };
 
   const resetBatchForm = () => {
@@ -1948,7 +1919,8 @@ export default function App() {
         <ScrollView contentContainerStyle={styles.container}>
           <View style={styles.phone}>
             <View style={styles.loginHeaderBlock}>
-              <Image source={ICM_LOGO_FULL} style={styles.loginLogo} resizeMode="contain" />
+              <Image source={ICM_LOGO_MARK} style={styles.loginLogoMark} resizeMode="contain" />
+              <Text style={styles.loginCompanyName}>Инновационный центр металлообработки</Text>
             </View>
             <View style={styles.card}>
               <Label text="Логин" />
@@ -1996,12 +1968,12 @@ export default function App() {
             <View>
               <SectionTitle title="Сводка производства" />
               <View style={styles.grid2}>
-                <StatCard title="Партий за месяц" value={String(stats.total)} onPress={() => navigateFromStatCard('total')} />
-                <StatCard title="Созданы" value={String(stats.created)} onPress={() => navigateFromStatCard('created')} />
-                <StatCard title="В процессе" value={String(stats.inProcess)} onPress={() => navigateFromStatCard('inProcess')} />
-                <StatCard title="Готовы к проверке" value={String(stats.readyCheck)} onPress={() => navigateFromStatCard('readyCheck')} />
-                <StatCard title="Проверены" value={String(stats.checked)} onPress={() => navigateFromStatCard('checked')} />
-                <StatCard title="Готовы к отправке" value={String(stats.readyToSend)} onPress={() => navigateFromStatCard('readyToSend')} />
+                <StatCard title="Партий за месяц" value={String(stats.total)} />
+                <StatCard title="Созданы" value={String(stats.created)} />
+                <StatCard title="В процессе" value={String(stats.inProcess)} />
+                <StatCard title="Готовы к проверке" value={String(stats.readyCheck)} />
+                <StatCard title="Проверены" value={String(stats.checked)} />
+                <StatCard title="Готовы к отправке" value={String(stats.readyToSend)} />
               </View>
             </View>
           )}
@@ -2559,8 +2531,9 @@ const styles = StyleSheet.create({
   phone: { width: '100%', maxWidth: 560, backgroundColor: COLORS.bg, borderRadius: 24, padding: 16, minHeight: '100%' },
   headerBlock: { marginBottom: 18 },
   title: { color: COLORS.text, fontSize: 30, fontWeight: '800' },
-  loginHeaderBlock: { width: '100%', alignItems: 'center', marginBottom: 18, marginTop: 4 },
-  loginLogo: { width: '88%', maxWidth: 390, height: 188 },
+  loginHeaderBlock: { width: '100%', alignItems: 'center', marginBottom: 22, marginTop: 4 },
+  loginLogoMark: { width: 180, height: 150, marginBottom: 6 },
+  loginCompanyName: { maxWidth: 430, color: COLORS.text, fontSize: 20, lineHeight: 26, fontWeight: '800', textAlign: 'center', textTransform: 'uppercase', letterSpacing: 1.1 },
   topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
   userIdentity: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 12 },
   userIdentityText: { flex: 1, minWidth: 0 },
@@ -2593,7 +2566,6 @@ const styles = StyleSheet.create({
   sectionTitle: { color: COLORS.text, fontSize: 22, fontWeight: '700', marginBottom: 12 },
   grid2: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 10, marginBottom: 14 },
   statCard: { width: '48%', minHeight: 132, backgroundColor: COLORS.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: COLORS.border, justifyContent: 'space-between' },
-  statCardPressable: { overflow: 'hidden' },
   statValue: { fontSize: 28, fontWeight: '800', color: COLORS.accent2 },
   statTitle: { marginTop: 6, color: COLORS.muted, fontSize: 13 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
