@@ -585,6 +585,7 @@ export default function App() {
   const [reportDateFrom, setReportDateFrom] = useState('');
   const [reportDateTo, setReportDateTo] = useState('');
   const [reportDefectStatus, setReportDefectStatus] = useState<'Все' | DefectReviewStatus>('Все');
+  const [showDefectStatusMenu, setShowDefectStatusMenu] = useState(false);
   const [expandedArchiveMonths, setExpandedArchiveMonths] = useState<string[]>([]);
   const [showReportFromPicker, setShowReportFromPicker] = useState(false);
   const [showReportToPicker, setShowReportToPicker] = useState(false);
@@ -713,19 +714,24 @@ export default function App() {
 
 
 
-  const defectBatchesByProduct = useMemo(() => {
-    const grouped: Record<string, Batch[]> = {};
-    batches
+  const defectBatchesList = useMemo(() => {
+    return batches
       .filter((batch) => {
         const inspection = inspections.find((item) => item.batchId === batch.id);
-        return !!inspection && inspection.defects.length > 0;
+        if (!inspection || inspection.defects.length === 0) return false;
+
+        if (!isDateInRange(batch.manufactureDate, reportDateFrom, reportDateTo)) {
+          return false;
+        }
+
+        if (reportDefectStatus === 'Все') {
+          return true;
+        }
+
+        return inspection.defects.some((defect) => defect.reviewStatus === reportDefectStatus);
       })
-      .forEach((batch) => {
-        if (!grouped[batch.productName]) grouped[batch.productName] = [];
-        grouped[batch.productName].push(batch);
-      });
-    return grouped;
-  }, [batches, inspections]);
+      .sort((a, b) => dateToMs(b.manufactureDate) - dateToMs(a.manufactureDate));
+  }, [batches, inspections, reportDateFrom, reportDateTo, reportDefectStatus]);
 
   const filteredBatchesForCurrentUser = useMemo(() => {
     if (!currentUser) return visibleBatchesPage;
@@ -2298,60 +2304,154 @@ export default function App() {
             </View>
           )}
 
-          {screen === 'defects' && (
+                    {screen === 'defects' && (
             <View>
               <SectionTitle title="Брак" />
-              {Object.keys(defectBatchesByProduct).length === 0 ? (
-                <View style={styles.card}><Text style={styles.text}>Записей о браке пока нет.</Text></View>
-              ) : (
-                Object.entries(defectBatchesByProduct).map(([productName, items]) => (
-                  <View key={productName} style={styles.card}>
-                    <Text style={styles.cardTitle}>{productName}</Text>
-                    {items.map((batch) => {
-                      const inspection = inspections.find((item) => item.batchId === batch.id);
-                      const isExpanded = defectExpandedBatchId === batch.id;
-                      return (
-                        <View key={batch.id} style={styles.historyItem}>
-                          <Pressable onPress={() => setDefectExpandedBatchId((prev) => (prev === batch.id ? null : batch.id))}>
-                            <Text style={styles.defectItemTitle}>{batch.productName}</Text>
-                            <Text style={styles.text}>Номер партии: {batch.batchNumber}</Text>
-                            <Text style={styles.text}>Дата создания: {formatDisplayDate(batch.manufactureDate)}</Text>
-                          </Pressable>
-                          {isExpanded && inspection && (
-                            <View style={styles.cardSoft}>
-                              <Text style={styles.text}>Номер партии: {batch.batchNumber}</Text>
-                              <Text style={styles.text}>Дата создания: {formatDisplayDate(batch.manufactureDate)}</Text>
-                              <Text style={styles.text}>Дата проверки: {formatDisplayDate(inspection.date)}</Text>
-                              <Text style={styles.text}>Дата отправки: {formatDisplayDate(batch.sentToAssemblyAt)}</Text>
-                              <Text style={styles.text}>Работник: {batch.workerName}</Text>
-                              <Text style={styles.text}>Визуальный контроль: {inspection.visualConclusion || '—'}</Text>
-                              <Text style={styles.text}>Параметры: {inspection.geometryConclusion || '—'}</Text>
-                              {inspection.defects.map((defect) => (
-                                <View key={defect.id} style={styles.historyItem}>
-                                  <Text style={styles.text}>• {defect.defectClass} — {defect.affectedCount} шт.</Text>
-                                  <Text style={styles.text}>Комментарий: {defect.comment || '—'}</Text>
-                                  <Text style={styles.text}>Статус: {defect.reviewStatus}</Text>
-                                  {!!defect.imageUri && <Image source={{ uri: defect.imageUri }} style={styles.imagePreviewSmall} />}
-                                  <View style={styles.filterRow}>
-                                    {DEFECT_STATUS_OPTIONS.map((status) => (
-                                      <Pressable
-                                        key={status}
-                                        style={[styles.filterChip, defect.reviewStatus === status && styles.filterChipActive]}
-                                        onPress={() => updateDefectStatus(defect.id, status)}
-                                      >
-                                        <Text style={[styles.filterChipText, defect.reviewStatus === status && styles.filterChipTextActive]}>{status}</Text>
-                                      </Pressable>
-                                    ))}
-                                  </View>
-                                </View>
-                              ))}
-                            </View>
-                          )}
-                        </View>
-                      );
-                    })}
+
+              <View style={[styles.card, styles.reportFilterCard]}>
+                <View style={styles.filterHeaderRow}>
+                  <Text style={[styles.cardTitle, styles.filterTitle]}>Фильтр</Text>
+                  <Pressable style={styles.filterResetButton} onPress={resetReportFilters}>
+                    <Text style={styles.filterResetButtonText}>Сбросить</Text>
+                  </Pressable>
+                </View>
+
+                <View style={styles.filterDateRow}>
+                  <View style={styles.filterField}>
+                    <Text style={styles.compactLabel}>Дата от</Text>
+                    <Pressable style={styles.compactPickerButton} onPress={() => setShowReportFromPicker(true)}>
+                      <Text style={styles.compactPickerButtonText} numberOfLines={1}>
+                        {reportDateFrom ? formatDisplayDate(reportDateFrom) : 'Выбрать'}
+                      </Text>
+                    </Pressable>
                   </View>
-                ))
+
+                  <View style={styles.filterField}>
+                    <Text style={styles.compactLabel}>Дата до</Text>
+                    <Pressable style={styles.compactPickerButton} onPress={() => setShowReportToPicker(true)}>
+                      <Text style={styles.compactPickerButtonText} numberOfLines={1}>
+                        {reportDateTo ? formatDisplayDate(reportDateTo) : 'Выбрать'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                {showReportFromPicker && (
+                  <DateTimePicker
+                    value={reportDateFrom ? new Date(reportDateFrom) : new Date()}
+                    mode="date"
+                    display="default"
+                    onChange={onChangeReportFromDate}
+                  />
+                )}
+
+                {showReportToPicker && (
+                  <DateTimePicker
+                    value={reportDateTo ? new Date(reportDateTo) : new Date()}
+                    mode="date"
+                    display="default"
+                    onChange={onChangeReportToDate}
+                  />
+                )}
+
+                <View style={styles.filterStatusRow}>
+                  <Text style={styles.compactLabel}>Статус брака</Text>
+                  <Pressable style={styles.filterStatusButton} onPress={() => setShowDefectStatusMenu(true)}>
+                    <Text style={styles.filterStatusButtonText} numberOfLines={1}>
+                      {reportDefectStatus}
+                    </Text>
+                    <Text style={styles.filterStatusChevron}>⌄</Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              <Modal
+                visible={showDefectStatusMenu}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowDefectStatusMenu(false)}
+              >
+                <Pressable style={styles.modalOverlay} onPress={() => setShowDefectStatusMenu(false)}>
+                  <Pressable style={styles.modalCard} onPress={() => {}}>
+                    <Text style={styles.modalTitle}>Статус брака</Text>
+                    <View style={styles.dropdownMenu}>
+                      {(['Все', ...DEFECT_STATUS_OPTIONS] as const).map((status) => (
+                        <Pressable
+                          key={status}
+                          style={[styles.dropdownItem, reportDefectStatus === status && styles.dropdownItemActive]}
+                          onPress={() => {
+                            setReportDefectStatus(status as any);
+                            setShowDefectStatusMenu(false);
+                          }}
+                        >
+                          <Text style={[styles.dropdownItemText, reportDefectStatus === status && styles.dropdownItemTextActive]}>
+                            {status}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </Pressable>
+                </Pressable>
+              </Modal>
+
+              {defectBatchesList.length === 0 ? (
+                <View style={styles.card}>
+                  <Text style={styles.text}>Записей о браке пока нет.</Text>
+                </View>
+              ) : (
+                <View style={styles.card}>
+                  {defectBatchesList.map((batch) => {
+                    const inspection = inspections.find((item) => item.batchId === batch.id);
+                    const isExpanded = defectExpandedBatchId === batch.id;
+
+                    return (
+                      <View key={batch.id} style={styles.historyItem}>
+                        <Pressable onPress={() => setDefectExpandedBatchId((prev) => (prev === batch.id ? null : batch.id))}>
+                          <Text style={styles.defectItemTitle}>{batch.productName}</Text>
+                          <Text style={styles.text}>Номер партии: {batch.batchNumber}</Text>
+                          <Text style={styles.text}>Дата создания: {formatDisplayDate(batch.manufactureDate)}</Text>
+                        </Pressable>
+
+                        {isExpanded && inspection && (
+                          <View style={styles.cardSoft}>
+                            <Text style={styles.text}>Дата проверки: {formatDisplayDate(inspection.date)}</Text>
+                            <Text style={styles.text}>Дата отправки: {formatDisplayDate(batch.sentToAssemblyAt)}</Text>
+                            <Text style={styles.text}>Работник: {batch.workerName || 'Не назначен'}</Text>
+                            <Text style={styles.text}>Визуальный контроль: {inspection.visualConclusion || '—'}</Text>
+                            <Text style={styles.text}>Параметры: {inspection.geometryConclusion || '—'}</Text>
+
+                            {inspection.defects.map((defect) => (
+                              <View key={defect.id} style={styles.historyItem}>
+                                <Text style={styles.text}>• {defect.defectClass} — {defect.affectedCount} шт.</Text>
+                                <Text style={styles.text}>Уверенность AI: {(defect.confidence * 100).toFixed(1)}%</Text>
+                                <Text style={styles.text}>Комментарий: {defect.comment || '—'}</Text>
+                                <Text style={styles.text}>Статус: {defect.reviewStatus}</Text>
+
+                                {!!defect.imageUri && (
+                                  <Image source={{ uri: defect.imageUri }} style={styles.imagePreviewSmall} />
+                                )}
+
+                                <View style={styles.filterRow}>
+                                  {DEFECT_STATUS_OPTIONS.map((status) => (
+                                    <Pressable
+                                      key={status}
+                                      style={[styles.filterChip, defect.reviewStatus === status && styles.filterChipActive]}
+                                      onPress={() => updateDefectStatus(defect.id, status)}
+                                    >
+                                      <Text style={[styles.filterChipText, defect.reviewStatus === status && styles.filterChipTextActive]}>
+                                        {status}
+                                      </Text>
+                                    </Pressable>
+                                  ))}
+                                </View>
+                              </View>
+                            ))}
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
               )}
             </View>
           )}
@@ -2526,9 +2626,9 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#020617' },
-  container: { paddingHorizontal: 12, paddingVertical: 16, alignItems: 'center' },
-  phone: { width: '100%', maxWidth: 560, backgroundColor: COLORS.bg, borderRadius: 24, padding: 16, minHeight: '100%' },
+  safeArea: { flex: 1, backgroundColor: COLORS.bg },
+  container: { flexGrow: 1, paddingHorizontal: 12, paddingTop: 16, paddingBottom: 0, alignItems: 'center', backgroundColor: COLORS.bg },
+  phone: { flexGrow: 1, width: '100%', maxWidth: 560, backgroundColor: COLORS.bg, borderRadius: 24, padding: 16, paddingBottom: 28 },
   headerBlock: { marginBottom: 18 },
   title: { color: COLORS.text, fontSize: 30, fontWeight: '800' },
   loginHeaderBlock: { width: '100%', alignItems: 'center', marginBottom: 22, marginTop: 4 },
@@ -2553,21 +2653,21 @@ const styles = StyleSheet.create({
   label: { color: COLORS.muted, fontSize: 13, marginTop: 8, marginBottom: 6 },
   input: { width: '100%', backgroundColor: '#0b1220', color: COLORS.text, borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 8 },
   textarea: { width: '100%', minHeight: 88, backgroundColor: '#0b1220', color: COLORS.text, borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 8, textAlignVertical: 'top' },
-  primaryButton: { width: '100%', minHeight: 52, backgroundColor: COLORS.accent, borderRadius: 16, paddingVertical: 13, paddingHorizontal: 16, marginTop: 10, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch' },
-  primaryButtonText: { color: '#052e16', fontWeight: '800', textAlign: 'center', fontSize: 15, lineHeight: 20 },
+  primaryButton: { width: '100%', backgroundColor: '#2563eb', borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, marginTop: 8, alignItems: 'center' },
+  primaryButtonText: { color: '#eff6ff', fontWeight: '800' },
   secondaryButton: { width: '100%', minHeight: 50, backgroundColor: COLORS.soft, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch', marginTop: 8 },
   secondaryButtonText: { color: COLORS.text, fontWeight: '700', textAlign: 'center', fontSize: 15, lineHeight: 20 },
   iconButton: { width: 44, height: 44, backgroundColor: COLORS.soft, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   iconButtonText: { color: COLORS.text, fontSize: 20, fontWeight: '800' },
   smallCloseButton: { width: 44, height: 44, backgroundColor: COLORS.soft, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   smallCloseButtonText: { color: COLORS.text, fontSize: 28, fontWeight: '700', lineHeight: 28 },
-  dangerButton: { width: '100%', minHeight: 46, backgroundColor: '#5f1f24', borderRadius: 13, paddingVertical: 10, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch', marginTop: 8 },
+  dangerButton: { alignSelf: 'flex-start', backgroundColor: '#6b2020', borderRadius: 12, paddingVertical: 9, paddingHorizontal: 12, alignItems: 'center', marginRight: 8, marginBottom: 8 },
   dangerButtonText: { color: '#fee2e2', fontWeight: '700', textAlign: 'center', fontSize: 15, lineHeight: 20 },
   sectionTitle: { color: COLORS.text, fontSize: 22, fontWeight: '700', marginBottom: 12 },
-  grid2: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 10, marginBottom: 14 },
-  statCard: { width: '48%', minHeight: 132, backgroundColor: COLORS.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: COLORS.border, justifyContent: 'space-between' },
-  statValue: { fontSize: 28, fontWeight: '800', color: COLORS.accent2 },
-  statTitle: { marginTop: 6, color: COLORS.muted, fontSize: 13 },
+  grid2: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 14 },
+  statCard: { width: '48%', minHeight: 132, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.card, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: COLORS.border, marginBottom: 10 },
+  statValue: { fontSize: 32, fontWeight: '800', color: COLORS.accent2, textAlign: 'center' },
+  statTitle: { marginTop: 8, color: COLORS.muted, fontSize: 15, fontWeight: '700', textAlign: 'center' },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   inspectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   badge: { borderRadius: 999, paddingVertical: 6, paddingHorizontal: 10, marginLeft: 8 },
@@ -2580,9 +2680,9 @@ const styles = StyleSheet.create({
   imagePreviewSmall: { width: '100%', height: 180, borderRadius: 10, marginTop: 8, marginBottom: 8, backgroundColor: '#000' },
   roleRow: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8, marginTop: 4 },
   roleButton: { flexGrow: 1, flexBasis: '45%', minWidth: 120, minHeight: 48, backgroundColor: '#0b1220', borderWidth: 1, borderColor: COLORS.border, borderRadius: 14, paddingVertical: 11, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
-  roleButtonActive: { backgroundColor: COLORS.accent2, borderColor: COLORS.accent2 },
+  roleButtonActive: { backgroundColor: '#1e40af', borderColor: '#3b82f6' },
   roleButtonText: { color: COLORS.text, fontWeight: '700', textAlign: 'center', fontSize: 14, lineHeight: 19 },
-  roleButtonTextActive: { color: '#082f49', fontWeight: '800' },
+  roleButtonTextActive: { color: '#dbeafe', fontWeight: '800' },
   disabledButton: { opacity: 0.55 },
   datePickerButton: { width: '100%', backgroundColor: '#0b1220', borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 14, marginBottom: 8 },
   datePickerButtonText: { color: COLORS.text, fontSize: 14 },
@@ -2606,10 +2706,27 @@ const styles = StyleSheet.create({
   dropdownItemTextActive: { color: '#dbeafe' },
   filterRow: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
   filterChip: { flexGrow: 1, flexBasis: '45%', minWidth: 130, minHeight: 42, paddingVertical: 9, paddingHorizontal: 12, borderRadius: 999, backgroundColor: '#0b1220', borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  filterChipActive: { backgroundColor: COLORS.accent2, borderColor: COLORS.accent2 },
+  filterChipActive: { backgroundColor: '#1e40af', borderColor: '#3b82f6' },
   filterChipText: { color: COLORS.text, fontWeight: '700', fontSize: 12, textAlign: 'center' },
-  filterChipTextActive: { color: '#082f49', fontWeight: '800' },
+  filterChipTextActive: { color: '#dbeafe', fontWeight: '800' },
   defectItemTitle: { color: COLORS.accent2, fontSize: 20, fontWeight: '700', textDecorationLine: 'underline', marginBottom: 4 },
   compactDangerButton: { width: 'auto', minWidth: 170, alignSelf: 'center', paddingHorizontal: 22 },
-});
+  reportFilterCard: { padding: 12, marginBottom: 12 },
+  filterHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  filterTitle: { marginBottom: 0 },
+  filterResetButton: { backgroundColor: '#0b1220', borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingVertical: 7, paddingHorizontal: 10 },
+  filterResetButtonText: { color: COLORS.muted, fontWeight: '700', fontSize: 12 },
+  filterDateRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  filterField: { flex: 1 },
+  compactLabel: { color: COLORS.muted, fontSize: 12, marginBottom: 5, fontWeight: '700' },
+  compactPickerButton: { backgroundColor: '#0b1220', borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 10 },
+  compactPickerButtonText: { color: COLORS.text, fontSize: 13, fontWeight: '600' },
+  filterStatusRow: { marginTop: 2 },
+  filterStatusButton: { width: '100%', minHeight: 42, backgroundColor: '#0b1220', borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  filterStatusButtonText: { color: COLORS.text, fontSize: 13, fontWeight: '700', flex: 1 },
+  filterStatusChevron: { color: COLORS.muted, fontSize: 18, marginLeft: 8 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(2, 6, 23, 0.75)', justifyContent: 'center', padding: 24 },
+  modalCard: { backgroundColor: COLORS.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: COLORS.border },
+  modalTitle: { color: COLORS.text, fontSize: 18, fontWeight: '700', marginBottom: 12 },
 
+});
