@@ -59,6 +59,10 @@ BEGIN
     RAISE EXCEPTION 'Archived plastic bin % cannot start a cycle', NEW.bin_id;
   END IF;
 
+  IF TG_OP = 'INSERT' AND NEW.cycle_status = 'active' AND v_bin_status <> 'free' THEN
+    RAISE EXCEPTION 'Plastic bin % is not free', NEW.bin_id;
+  END IF;
+
   RETURN NEW;
 END;
 $$;
@@ -167,66 +171,30 @@ ON mic2.finished_boxes
 FOR EACH ROW
 EXECUTE FUNCTION mic2.prevent_finished_box_reopen();
 
--- Keep the bin's occupied/free state aligned with active production cycles.
--- A cycle may be completed while the bin remains occupied; freeing the bin
--- is a separate QC-controlled operation after all physical contents are cleared.
-CREATE OR REPLACE FUNCTION mic2.refresh_bin_occupancy(p_bin_id BIGINT)
-RETURNS void
-LANGUAGE plpgsql
-AS $$
-DECLARE
-  v_has_active_cycle BOOLEAN;
-  v_is_archived BOOLEAN;
-BEGIN
-  SELECT EXISTS (
-    SELECT 1
-    FROM mic2.production_cycles
-    WHERE bin_id = p_bin_id AND cycle_status = 'active'
-  ) INTO v_has_active_cycle;
-
-  SELECT bin_status = 'archived'
-  INTO v_is_archived
-  FROM mic2.plastic_bins
-  WHERE id = p_bin_id
-  FOR UPDATE;
-
-  IF NOT FOUND OR v_is_archived THEN
-    RETURN;
-  END IF;
-
-  UPDATE mic2.plastic_bins
-  SET bin_status = CASE WHEN v_has_active_cycle THEN 'occupied' ELSE 'free' END
-  WHERE id = p_bin_id;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION mic2.sync_bin_occupancy_from_cycle()
+-- Starting a cycle occupies the bin. Completing a cycle deliberately does NOT
+-- free it: QC must account for and physically clear all contents first.
+CREATE OR REPLACE FUNCTION mic2.occupy_bin_on_cycle_start()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  IF TG_OP = 'INSERT' THEN
-    PERFORM mic2.refresh_bin_occupancy(NEW.bin_id);
-    RETURN NEW;
-  ELSIF TG_OP = 'DELETE' THEN
-    PERFORM mic2.refresh_bin_occupancy(OLD.bin_id);
-    RETURN OLD;
-  ELSE
-    PERFORM mic2.refresh_bin_occupancy(OLD.bin_id);
-    IF NEW.bin_id IS DISTINCT FROM OLD.bin_id THEN
-      PERFORM mic2.refresh_bin_occupancy(NEW.bin_id);
+  IF NEW.cycle_status = 'active' THEN
+    UPDATE mic2.plastic_bins
+    SET bin_status = 'occupied'
+    WHERE id = NEW.bin_id AND bin_status = 'free';
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Plastic bin % is not available for a new cycle', NEW.bin_id;
     END IF;
-    PERFORM mic2.refresh_bin_occupancy(NEW.bin_id);
-    RETURN NEW;
   END IF;
+  RETURN NEW;
 END;
 $$;
 
-CREATE TRIGGER production_cycles_sync_bin_occupancy
-AFTER INSERT OR UPDATE OF bin_id, cycle_status OR DELETE
+CREATE TRIGGER production_cycles_occupy_bin
+AFTER INSERT
 ON mic2.production_cycles
 FOR EACH ROW
-EXECUTE FUNCTION mic2.sync_bin_occupancy_from_cycle();
+EXECUTE FUNCTION mic2.occupy_bin_on_cycle_start();
 
 -- A bin can only be marked free if it has no active production cycle.
 CREATE OR REPLACE FUNCTION mic2.guard_plastic_bin_status()
