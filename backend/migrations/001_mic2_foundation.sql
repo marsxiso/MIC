@@ -1,4 +1,6 @@
 -- MIC 2.0 foundation schema
+-- Display bin and box numbers from their identity primary keys (id), formatted in the UI as 001, 002, etc.
+-- PostgreSQL permits only one identity column per table.
 -- This migration creates an isolated schema and does not alter legacy public tables.
 -- Apply only to a dedicated test database after review.
 
@@ -136,7 +138,6 @@ CREATE TABLE mic2.measurement_parameters (
 
 CREATE TABLE mic2.plastic_bins (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  bin_number BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
   bin_status TEXT NOT NULL DEFAULT 'free'
     CHECK (bin_status IN ('free', 'occupied', 'archived')),
   created_by BIGINT REFERENCES mic2.employees(id) ON DELETE SET NULL,
@@ -335,7 +336,6 @@ CREATE TABLE mic2.rework_records (
 
 CREATE TABLE mic2.finished_boxes (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  box_number BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
   product_id BIGINT NOT NULL REFERENCES mic2.products(id) ON DELETE RESTRICT,
   product_code_snapshot TEXT NOT NULL,
   product_name_snapshot TEXT NOT NULL,
