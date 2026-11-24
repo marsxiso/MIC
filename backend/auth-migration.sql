@@ -35,3 +35,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_login_unique_idx
 CREATE UNIQUE INDEX IF NOT EXISTS workers_login_unique_idx
   ON workers (login)
   WHERE login IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS auth_login_attempts (
+  login_key TEXT PRIMARY KEY,
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  locked_until TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
