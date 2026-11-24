@@ -51,7 +51,7 @@ function issueToken(identity) {
     kind: identity.kind,
     role: identity.role,
   };
-  return jwt.sign(payload, getJwtSecret(), { expiresIn: '8h', issuer: 'mic-api', audience: 'mic-app' });
+  return jwt.sign(payload, getJwtSecret(), { expiresIn: '2h', issuer: 'mic-api', audience: 'mic-app' });
 }
 
 function authenticate(req, res, next) {
