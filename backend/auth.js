@@ -79,6 +79,7 @@ function requireRole(...roles) {
 }
 
 module.exports = {
+  getJwtSecret,
   PASSWORD_MIN_LENGTH,
   ACTIVATION_TTL_MINUTES,
   createActivationCode,
