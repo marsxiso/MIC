@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const { Pool } = require('pg');
+const { authenticate, issueToken, verifyPassword, hashPassword } = require('./auth');
 
 const app = express();
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -36,6 +37,8 @@ async function runSchema() {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)");
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(255)");
   await pool.query("ALTER TABLE inspection_defects ADD COLUMN IF NOT EXISTS review_status VARCHAR(50) DEFAULT 'На рассмотрении'");
+  const authMigration = fs.readFileSync(path.join(__dirname, 'auth-migration.sql'), 'utf8');
+  await pool.query(authMigration);
 }
 
 function toInt(value) {
@@ -130,47 +133,35 @@ app.get('/api/health', async (req, res) => {
 app.post('/auth/login', async (req, res) => {
   try {
     const { login, password } = req.body;
-    if (!login || !password) {
-      return res.status(400).json({ ok: false, message: 'Введите логин и пароль' });
+    if (!login || !password) return res.status(400).json({ ok: false, message: 'Введите логин и пароль' });
+
+    const userResult = await pool.query(
+      'SELECT id, login, full_name, role, password_hash FROM users WHERE login = $1 LIMIT 1',
+      [String(login).trim()]
+    );
+    let identity = userResult.rows[0] ? { ...userResult.rows[0], kind: 'user' } : null;
+
+    if (!identity) {
+      const workerResult = await pool.query(
+        'SELECT id, login, full_name, password_hash FROM workers WHERE login = $1 LIMIT 1',
+        [String(login).trim()]
+      );
+      if (workerResult.rows[0]) identity = { ...workerResult.rows[0], role: 'Рабочий', kind: 'worker' };
     }
 
-    const result = await pool.query(
-      'SELECT * FROM users WHERE login = $1 AND password_hash = $2',
-      [login, password]
-    );
-
-    if (result.rows.length > 0) {
-      const user = result.rows[0];
-      return res.json({
-        ok: true,
-        token: 'ok',
-        user: {
-          id: user.id,
-          login: user.login,
-          full_name: user.full_name,
-          role: user.role,
-        },
-      });
-    }
-
-    const workerResult = await pool.query(
-      'SELECT * FROM workers WHERE login = $1 AND password_hash = $2',
-      [login, password]
-    );
-
-    if (workerResult.rows.length === 0) {
+    if (!identity || !(await verifyPassword(password, identity.password_hash))) {
       return res.status(401).json({ ok: false, message: 'Неверный логин или пароль' });
     }
 
-    const worker = workerResult.rows[0];
-    res.json({
+    const token = issueToken({ id: identity.id, kind: identity.kind, role: identity.role });
+    return res.json({
       ok: true,
-      token: 'ok',
+      token,
       user: {
-        id: worker.id,
-        login: worker.login,
-        full_name: worker.full_name,
-        role: 'Рабочий',
+        id: identity.id,
+        login: identity.login,
+        full_name: identity.full_name,
+        role: identity.role,
       },
     });
   } catch (error) {
@@ -179,9 +170,13 @@ app.post('/auth/login', async (req, res) => {
   }
 });
 
+// All business API endpoints require a signed-in identity.
+// Health and login routes are intentionally declared before this middleware.
+app.use('/api', authenticate);
+
 app.get('/api/users', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM users ORDER BY id');
+    const result = await pool.query('SELECT id, full_name, login, role FROM users ORDER BY id');
     res.json(result.rows);
   } catch (error) {
     console.error('GET USERS ERROR:', error);
@@ -962,7 +957,7 @@ app.post('/api/upload-image', upload.single('file'), async (req, res) => {
   }
 });
 
-app.post('/analyze-defect', upload.single('file'), async (req, res) => {
+app.post('/analyze-defect', authenticate, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ ok: false, message: 'Файл не загружен' });
