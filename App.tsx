@@ -2714,7 +2714,7 @@ export default function App() {
                       ))}
                     </View>
                     <Pressable style={styles.primaryButton} onPress={creatingUser ? createUser : saveUser}>
-                      <Text style={styles.primaryButtonText}>{creatingUser ? 'Создать пользователя' : 'Сохранить пользователя'}
+                      <Text style={styles.primaryButtonText}>{creatingUser ? 'Создать пользователя' : 'Сохранить пользователя'}</Text>
                     </Pressable>
                     <Pressable style={styles.secondaryButton} onPress={() => { setEditingUserId(null); setCreatingUser(false); setUserForm({ name: '', login: '', password: '', role: 'Контролер' }); }}>
                       <Text style={styles.secondaryButtonText}>Отмена</Text>
