@@ -44,6 +44,7 @@ jobs:
         with:
           node-version: 20
       - run: npm install expo@~52.0.0
+      - run: npx expo install --fix
       - run: npm install --package-lock-only --ignore-scripts
       - run: npm ci
       - run: npx expo-doctor
@@ -71,6 +72,7 @@ jobs:
         with:
           node-version: 20
       - run: npm install expo@~52.0.0
+      - run: npx expo install --fix
       - run: npm install --package-lock-only --ignore-scripts
       - run: npm --prefix backend install --package-lock-only --ignore-scripts
       - run: npm --prefix backend audit fix --package-lock-only || true
