@@ -41,6 +41,27 @@ async function runSchema() {
   await pool.query(authMigration);
 }
 
+function authenticateCurrentAccount(req, res, next) {
+  return authenticate(req, res, async () => {
+    try {
+      const kind = req.auth?.kind;
+      if (kind !== 'user' && kind !== 'worker') {
+        return res.status(401).json({ ok: false, message: 'Недействительный тип учётной записи' });
+      }
+      const table = kind === 'user' ? 'users' : 'workers';
+      const result = await pool.query(`SELECT id, ${kind === 'user' ? 'role' : "'Рабочий' AS role"} FROM ${table} WHERE id = $1 LIMIT 1`, [req.auth.sub]);
+      const account = result.rows[0];
+      if (!account || account.role !== req.auth.role) {
+        return res.status(401).json({ ok: false, message: 'Учётная запись изменена. Войдите снова.' });
+      }
+      next();
+    } catch (error) {
+      console.error('AUTH ACCOUNT CHECK ERROR:', error);
+      res.status(500).json({ ok: false, message: 'Не удалось проверить учётную запись' });
+    }
+  });
+}
+
 function isAdmin(req) { return ['Администратор', 'admin'].includes(req.auth?.role); }
 function isControlRole(req) { return ['Контролер', 'Контрольный мастер', 'controller', 'control_master', 'quality_master', 'admin', 'Администратор'].includes(req.auth?.role); }
 function isControlMasterRole(req) { return ['Контрольный мастер', 'control_master', 'quality_master', 'admin', 'Администратор'].includes(req.auth?.role); }
@@ -253,7 +274,7 @@ app.post('/auth/login', async (req, res) => {
 
 // All business API endpoints require a signed-in identity.
 // Health and login routes are intentionally declared before this middleware.
-app.use('/api', authenticate);
+app.use('/api', authenticateCurrentAccount);
 
 app.get('/api/users', async (req, res) => {
   try {
@@ -1065,7 +1086,7 @@ app.put('/api/inspection-defects/:id/status', async (req, res) => {
   }
 });
 
-app.post('/api/upload-image', authenticate, upload.single('file'), async (req, res) => {
+app.post('/api/upload-image', authenticateCurrentAccount, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ ok: false, message: 'Файл не загружен' });
@@ -1080,7 +1101,7 @@ app.post('/api/upload-image', authenticate, upload.single('file'), async (req, r
   }
 });
 
-app.post('/analyze-defect', authenticate, upload.single('file'), async (req, res) => {
+app.post('/analyze-defect', authenticateCurrentAccount, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ ok: false, message: 'Файл не загружен' });
