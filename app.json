@@ -12,7 +12,6 @@
     "android": {
       "package": "com.marsxiso.defectcontrol",
       "versionCode": 1,
-      "usesCleartextTraffic": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0f172a"
