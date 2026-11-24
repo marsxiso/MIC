@@ -101,18 +101,6 @@ type Shift = {
   roleLabel?: string;
 };
 
-type RoboflowPrediction = {
-  class?: string;
-  confidence?: number;
-};
-
-type AiApiResponse = {
-  defect?: string;
-  confidence?: number;
-  summary?: string;
-  predictions?: RoboflowPrediction[];
-};
-
 type LoginResponse = {
   ok: boolean;
   token?: string;
@@ -226,6 +214,7 @@ const monthNames: Record<string, string> = {
 
 const PRODUCT_OPTIONS = ['Втулка', 'Переходник', 'Удлинитель', 'Корпус'] as const;
 const DEFECT_STATUS_OPTIONS: DefectReviewStatus[] = ['Забраковано', 'На рассмотрении', 'Допущено до сборки'];
+const DEFECT_CLASS_OPTIONS: DefectClass[] = ['Царапина', 'Трещина', 'Коррозия', 'Вмятина', 'Раковина', 'Неопределено', 'Без дефекта'];
 type ProductOption = (typeof PRODUCT_OPTIONS)[number];
 
 
@@ -265,74 +254,6 @@ function normalizeDefectLabel(label?: string): DefectClass {
   if (value.includes('вмят') || value.includes('dent') || value.includes('inclusion')) return 'Вмятина';
   if (value.includes('раков') || value.includes('patch')) return 'Раковина';
   return 'Неопределено';
-}
-
-function makeAiSummary(rawLabel: string | undefined, defect: DefectClass, confidence: number, count: number) {
-  if (defect === 'Без дефекта' || count === 0) return 'Дефекты на изображении не обнаружены';
-  const percent = (confidence * 100).toFixed(1);
-  if (rawLabel && rawLabel !== defect) {
-    return `Обнаружен дефект "${defect}" (${rawLabel}) с вероятностью ${percent}%`;
-  }
-  return `Обнаружен дефект "${defect}" с вероятностью ${percent}%`;
-}
-
-async function analyzeDefectViaApi(imageUri: string, authToken: string): Promise<{ defect: DefectClass; confidence: number; summary?: string }> {
-  const formData = new FormData();
-  formData.append(
-    'file',
-    {
-      uri: imageUri,
-      name: `defect_${Date.now()}.jpg`,
-      type: 'image/jpeg',
-    } as any,
-  );
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-  try {
-    const response = await fetch(`${API_URL}/analyze-defect`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${authToken}` },
-      body: formData,
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(errorText || `HTTP ${response.status}`);
-    }
-
-    const data = (await response.json()) as AiApiResponse;
-    if (data.defect) {
-      const defect = normalizeDefectLabel(data.defect);
-      const confidence = Math.max(0, Math.min(1, Number(data.confidence ?? 0)));
-      return {
-        defect,
-        confidence,
-        summary: data.summary || makeAiSummary(data.defect, defect, confidence, 1),
-      };
-    }
-
-    const predictions = Array.isArray(data.predictions) ? data.predictions : [];
-    if (predictions.length === 0) {
-      return { defect: 'Без дефекта', confidence: 0, summary: 'Дефекты на изображении не обнаружены' };
-    }
-
-    const bestPrediction = predictions.reduce((best, current) =>
-      Number(current?.confidence ?? -1) > Number(best?.confidence ?? -1) ? current : best,
-    );
-    const bestRawLabel = bestPrediction?.class || 'unknown';
-    const defect = normalizeDefectLabel(bestRawLabel);
-    const confidence = Math.max(0, Math.min(1, Number(bestPrediction?.confidence ?? 0)));
-
-    return {
-      defect,
-      confidence,
-      summary: makeAiSummary(bestRawLabel, defect, confidence, predictions.length),
-    };
-  } finally {
-    clearTimeout(timeoutId);
-  }
 }
 
 async function uploadDefectImageToApi(imageUri: string, authToken: string): Promise<string> {
@@ -591,12 +512,7 @@ export default function App() {
   });
   const [detectedDefects, setDetectedDefects] = useState<DefectItem[]>([]);
   const [defectComment, setDefectComment] = useState('');
-  const [inferenceState, setInferenceState] = useState<{ loading: boolean; defect: DefectClass; confidence: number; summary?: string }>({
-    loading: false,
-    defect: 'Неопределено',
-    confidence: 0,
-    summary: '',
-  });
+  const [manualDefectClass, setManualDefectClass] = useState<DefectClass>('Неопределено');
 
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraFacing, setCameraFacing] = useState<CameraType>('back');
@@ -995,7 +911,7 @@ export default function App() {
     });
     setDetectedDefects(inspection.defects);
     setDefectComment('');
-    setInferenceState({ loading: false, defect: 'Неопределено', confidence: 0, summary: '' });
+    setManualDefectClass('Неопределено');
     setIsControlEditMode(false);
   }, [selectedBatchId, inspections]);
 
@@ -1300,25 +1216,9 @@ export default function App() {
 
   const resetCapturedPhoto = () => setInspectionForm((prev) => ({ ...prev, imageUri: '' }));
 
-  const performInference = async () => {
-    if (!inspectionForm.imageUri) {
-      Alert.alert('Нет снимка', 'Сначала сделайте снимок дефекта');
-      return;
-    }
-    try {
-      setInferenceState({ loading: true, defect: 'Неопределено', confidence: 0, summary: '' });
-      const result = await analyzeDefectViaApi(inspectionForm.imageUri, tokenRef.current);
-      setInferenceState({ loading: false, defect: result.defect, confidence: result.confidence, summary: result.summary || '' });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Не удалось получить ответ от AI API';
-      setInferenceState({ loading: false, defect: 'Неопределено', confidence: 0, summary: '' });
-      Alert.alert('Ошибка AI-анализа', `${message}\n\nПроверьте API_URL и доступность backend-сервера.`);
-    }
-  };
-
   const addDetectedDefect = () => {
-    if (inferenceState.defect === 'Неопределено') {
-      Alert.alert('Ошибка', 'Сначала выполните AI-анализ');
+    if (manualDefectClass === 'Неопределено') {
+      Alert.alert('Выберите дефект', 'Укажите класс дефекта вручную');
       return;
     }
     const affectedCount = Number(inspectionForm.rejectedCount || '0');
@@ -1328,8 +1228,8 @@ export default function App() {
     }
     setDetectedDefects((prev) => [{
       id: uid('D'),
-      defectClass: inferenceState.defect,
-      confidence: inferenceState.confidence,
+      defectClass: manualDefectClass,
+      confidence: 0,
       affectedCount,
       comment: defectComment.trim(),
       reviewStatus: 'На рассмотрении',
@@ -1914,7 +1814,7 @@ export default function App() {
               inspection.defects.map((defect) => (
                 <View key={defect.id} style={styles.historyItem}>
                   <Text style={styles.text}>• {defect.defectClass} — {defect.affectedCount} шт.</Text>
-                  <Text style={styles.text}>Уверенность AI: {(defect.confidence * 100).toFixed(1)}%</Text>
+                  <Text style={styles.text}>Класс дефекта: {defect.defectClass}</Text>
                   <Text style={styles.text}>Комментарий: {defect.comment || '—'}</Text>
                   <Text style={styles.text}>Статус брака: {defect.reviewStatus}</Text>
                   {!!defect.imageUri && <Image source={{ uri: defect.imageUri }} style={styles.imagePreviewSmall} />}
@@ -2292,7 +2192,7 @@ export default function App() {
                         <Text style={styles.secondaryButtonText}>Изменить</Text>
                       </Pressable>
                     )}
-                    <Label text="Изображение для анализа" />
+                    <Label text="Фотография дефекта (необязательно)" />
                     {!inspectionForm.imageUri && !inspectionLocked && (
                       <>
                         <Pressable style={styles.primaryButton} onPress={openCamera}><Text style={styles.primaryButtonText}>Открыть камеру</Text></Pressable>
@@ -2311,16 +2211,18 @@ export default function App() {
                       </View>
                     )}
 
-                    {!inspectionLocked && (
-                      <Pressable style={styles.primaryButton} onPress={performInference}>
-                        <Text style={styles.primaryButtonText}>{inferenceState.loading ? 'Анализ...' : 'Запустить AI-анализ'}</Text>
-                      </Pressable>
-                    )}
-
-                    <View style={styles.aiBox}>
-                      <Text style={styles.text}>Класс дефекта: <Text style={styles.textBold}>{inferenceState.defect}</Text></Text>
-                      <Text style={styles.text}>Уверенность: <Text style={styles.textBold}>{(inferenceState.confidence * 100).toFixed(1)}%</Text></Text>
-                      {!!inferenceState.summary && <Text style={[styles.text, { marginTop: 8 }]}>Комментарий AI: <Text style={styles.textBold}>{inferenceState.summary}</Text></Text>}
+                    <Label text="Класс дефекта" />
+                    <View style={styles.filterRow}>
+                      {DEFECT_CLASS_OPTIONS.map((defectClass) => (
+                        <Pressable
+                          key={defectClass}
+                          style={[styles.filterButton, manualDefectClass === defectClass && styles.filterButtonActive]}
+                          onPress={() => setManualDefectClass(defectClass)}
+                          disabled={inspectionLocked}
+                        >
+                          <Text style={styles.filterButtonText}>{defectClass}</Text>
+                        </Pressable>
+                      ))}
                     </View>
 
                     <Label text="Комментарий к найденному дефекту" />
@@ -2339,7 +2241,7 @@ export default function App() {
                         detectedDefects.map((item, index) => (
                           <View key={item.id} style={styles.historyItem}>
                             <Text style={styles.text}><Text style={styles.textBold}>Дефект {index + 1}:</Text> {item.defectClass}</Text>
-                            <Text style={styles.text}>Уверенность: {(item.confidence * 100).toFixed(1)}%</Text>
+                            <Text style={styles.text}>Класс дефекта: {item.defectClass}</Text>
                             <Text style={styles.text}>Количество изделий с этим дефектом: {item.affectedCount}</Text>
                             <Text style={styles.text}>Комментарий: {item.comment || '—'}</Text>
                             {!!item.imageUri && <Image source={{ uri: item.imageUri }} style={styles.imagePreviewSmall} />}
@@ -2884,7 +2786,6 @@ const styles = StyleSheet.create({
   badge: { borderRadius: 999, paddingVertical: 6, paddingHorizontal: 10, marginLeft: 8 },
   badgeText: { color: 'white', fontSize: 12, fontWeight: '700' },
   actionsWrap: { width: '100%', flexDirection: 'column', marginTop: 12, gap: 8, alignItems: 'stretch' },
-  aiBox: { backgroundColor: '#082f49', borderWidth: 1, borderColor: '#0ea5e9', borderRadius: 14, padding: 12, marginTop: 12, marginBottom: 12 },
   historyItem: { borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: 10, marginTop: 10 },
   previewBox: { backgroundColor: '#0b1220', borderWidth: 1, borderColor: COLORS.border, borderRadius: 14, padding: 12, marginBottom: 12 },
   imagePreview: { width: '100%', height: 260, borderRadius: 12, marginBottom: 12, backgroundColor: '#000' },
