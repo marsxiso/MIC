@@ -942,7 +942,7 @@ export default function App() {
       } catch (error) {
         console.error(error);
         await AsyncStorage.removeItem('lizun_current_user');
-        await AsyncStorage.removeItem('mic_auth_token');
+        await SecureStore.deleteItemAsync('mic_auth_token');
         if (mounted) {
           tokenRef.current = '';
           setCurrentUser(null);
