@@ -31,3 +31,5 @@ jobs:
         run: npx eas-cli build --platform android --profile preview --non-interactive --wait
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+# Lockfile refresh trigger after adding expo-asset.
