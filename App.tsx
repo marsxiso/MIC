@@ -290,7 +290,7 @@ async function analyzeDefectViaApi(imageUri: string): Promise<{ defect: DefectCl
   const timeoutId = setTimeout(() => controller.abort(), 30000);
 
   try {
-    const response = await fetch(`${API_URL}/analyze-defect`, {
+    const response = await apiFetch(`${API_URL}/analyze-defect`, {
       method: 'POST',
       body: formData,
       signal: controller.signal,
@@ -536,7 +536,15 @@ export default function App() {
 
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
-  const [, setToken] = useState('');
+  const [token, setToken] = useState('');
+
+  const apiFetch = (input: RequestInfo, init: RequestInit = {}) => fetch(input, {
+    ...init,
+    headers: {
+      ...((init.headers || {}) as Record<string, string>),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [screen, setScreen] = useState<Screen>('dashboard');
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -908,31 +916,36 @@ export default function App() {
     let mounted = true;
     (async () => {
       try {
+        const [rawUser, storedToken] = await Promise.all([
+          AsyncStorage.getItem('lizun_current_user'),
+          AsyncStorage.getItem('mic_auth_token'),
+        ]);
+        if (!storedToken || !rawUser) {
+          await AsyncStorage.removeItem('lizun_current_user');
+    await AsyncStorage.removeItem('mic_auth_token');
+          await AsyncStorage.removeItem('mic_auth_token');
+          if (mounted) setAppReady(true);
+          return;
+        }
+        const restoredUser = JSON.parse(rawUser) as User;
+        if (mounted) {
+          setToken(storedToken);
+          setCurrentUser(restoredUser);
+        }
         await syncAllFromServer();
-        if (mounted) setAppReady(true);
       } catch (error) {
         console.error(error);
+        await AsyncStorage.removeItem('lizun_current_user');
+        await AsyncStorage.removeItem('mic_auth_token');
         if (mounted) {
-          Alert.alert('Ошибка', `Не удалось получить данные с сервера ${API_URL}`);
-          setAppReady(true);
+          setToken('');
+          setCurrentUser(null);
         }
+      } finally {
+        if (mounted) setAppReady(true);
       }
     })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem('lizun_current_user');
-        if (raw) {
-          const user = JSON.parse(raw) as User;
-          setCurrentUser(user);
-        }
-      } catch {}
-    })();
+    return () => { mounted = false; };
   }, []);
 
   useEffect(() => {
@@ -989,6 +1002,7 @@ export default function App() {
         return;
       }
       setToken(data.token);
+      await AsyncStorage.setItem('mic_auth_token', data.token);
       const nextUser = {
         id: String(data.user.id),
         login: data.user.login || login.trim(),
