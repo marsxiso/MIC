@@ -1,0 +1,20 @@
+-- Additive MIC authentication migration.
+-- Safe for existing accounts: no rows are deleted and current passwords are not rewritten.
+ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+ALTER TABLE workers ALTER COLUMN password_hash DROP NOT NULL;
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS activation_code_hash TEXT,
+  ADD COLUMN IF NOT EXISTS activation_expires_at TIMESTAMPTZ;
+
+ALTER TABLE workers
+  ADD COLUMN IF NOT EXISTS activation_code_hash TEXT,
+  ADD COLUMN IF NOT EXISTS activation_expires_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS users_activation_expiry_idx
+  ON users (activation_expires_at)
+  WHERE activation_code_hash IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS workers_activation_expiry_idx
+  ON workers (activation_expires_at)
+  WHERE activation_code_hash IS NOT NULL;
