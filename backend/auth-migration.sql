@@ -18,3 +18,12 @@ CREATE INDEX IF NOT EXISTS users_activation_expiry_idx
 CREATE INDEX IF NOT EXISTS workers_activation_expiry_idx
   ON workers (activation_expires_at)
   WHERE activation_code_hash IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS auth_attempts (
+  login_key TEXT NOT NULL,
+  ip_key TEXT NOT NULL,
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  locked_until TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (login_key, ip_key)
+);
