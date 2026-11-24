@@ -136,6 +136,31 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+async function authIsLocked(login, ip) {
+  const result = await pool.query(
+    'SELECT locked_until FROM auth_attempts WHERE login_key = $1 AND ip_key = $2',
+    [String(login).trim().toLowerCase(), String(ip || 'unknown')]
+  );
+  return !!result.rows[0]?.locked_until && new Date(result.rows[0].locked_until) > new Date();
+}
+
+async function recordAuthFailure(login, ip) {
+  await pool.query(
+    `INSERT INTO auth_attempts (login_key, ip_key, failed_count, locked_until, updated_at)
+     VALUES ($1, $2, 1, NULL, NOW())
+     ON CONFLICT (login_key, ip_key) DO UPDATE SET
+       failed_count = CASE WHEN auth_attempts.locked_until IS NOT NULL AND auth_attempts.locked_until <= NOW() THEN 1 ELSE auth_attempts.failed_count + 1 END,
+       locked_until = CASE WHEN auth_attempts.failed_count >= 4 THEN NOW() + INTERVAL '15 minutes' ELSE NULL END,
+       updated_at = NOW()`,
+    [String(login).trim().toLowerCase(), String(ip || 'unknown')]
+  );
+}
+
+async function clearAuthFailures(login, ip) {
+  await pool.query('DELETE FROM auth_attempts WHERE login_key = $1 AND ip_key = $2',
+    [String(login).trim().toLowerCase(), String(ip || 'unknown')]);
+}
+
 app.post('/auth/activate', async (req, res) => {
   const { login, activation_code, password, password_confirm } = req.body || {};
   if (!login || !activation_code || !password || password !== password_confirm) {
@@ -145,6 +170,8 @@ app.post('/auth/activate', async (req, res) => {
     return res.status(400).json({ ok: false, message: 'Пароль должен содержать не менее 12 символов' });
   }
   try {
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+    if (await authIsLocked(login, ip)) return res.status(429).json({ ok: false, message: 'Слишком много попыток. Повторите через 15 минут.' });
     const userResult = await pool.query(
       'SELECT id, login, full_name, role, activation_code_hash, activation_expires_at FROM users WHERE login = $1 LIMIT 1',
       [String(login).trim()]
@@ -160,8 +187,10 @@ app.post('/auth/activate', async (req, res) => {
     if (!identity || !identity.activation_code_hash ||
         !identity.activation_expires_at || new Date(identity.activation_expires_at) < new Date() ||
         !(await verifyActivationCode(String(activation_code), identity.activation_code_hash))) {
+      await recordAuthFailure(login, ip);
       return res.status(400).json({ ok: false, message: 'Код недействителен или срок его действия истёк' });
     }
+    await clearAuthFailures(login, ip);
     const passwordHash = await hashPassword(String(password));
     const table = identity.kind === 'user' ? 'users' : 'workers';
     await pool.query(
@@ -180,6 +209,8 @@ app.post('/auth/login', async (req, res) => {
   try {
     const { login, password } = req.body;
     if (!login || !password) return res.status(400).json({ ok: false, message: 'Введите логин и пароль' });
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+    if (await authIsLocked(login, ip)) return res.status(429).json({ ok: false, message: 'Слишком много попыток. Повторите через 15 минут.' });
 
     const userResult = await pool.query(
       'SELECT id, login, full_name, role, password_hash FROM users WHERE login = $1 LIMIT 1',
@@ -196,8 +227,10 @@ app.post('/auth/login', async (req, res) => {
     }
 
     if (!identity || !(await verifyPassword(password, identity.password_hash))) {
+      await recordAuthFailure(login, ip);
       return res.status(401).json({ ok: false, message: 'Неверный логин или пароль' });
     }
+    await clearAuthFailures(login, ip);
 
     const token = issueToken({ id: identity.id, kind: identity.kind, role: identity.role });
     return res.json({
@@ -245,7 +278,7 @@ app.post('/api/users', async (req, res) => {
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ ok: false, message: 'Некорректная роль пользователя' });
     }
-    const duplicate = await pool.query('SELECT id FROM users WHERE login = $1', [String(login).trim()]);
+    const duplicate = await pool.query('SELECT id FROM users WHERE login = $1 UNION ALL SELECT id FROM workers WHERE login = $1 LIMIT 1', [String(login).trim()]);
     if (duplicate.rows.length > 0) {
       return res.status(400).json({ ok: false, message: 'Пользователь с таким логином уже существует' });
     }
@@ -327,6 +360,8 @@ app.post('/api/workers', async (req, res) => {
     if (!full_name || !login) {
       return res.status(400).json({ ok: false, message: 'full_name обязателен' });
     }
+    const duplicate = await pool.query('SELECT id FROM users WHERE login = $1 UNION ALL SELECT id FROM workers WHERE login = $1 LIMIT 1', [String(login).trim()]);
+    if (duplicate.rows.length) return res.status(400).json({ ok: false, message: 'Сотрудник с таким логином уже существует' });
     const activationCode = createActivationCode();
     const result = await pool.query(
       'INSERT INTO workers (full_name, login, password_hash, activation_code_hash, activation_expires_at) VALUES ($1, $2, NULL, $3, $4) RETURNING id, full_name, login',
