@@ -19,6 +19,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 18
+      - run: npm install --package-lock-only --ignore-scripts
+      - run: npm audit fix --package-lock-only || true
       - run: npm ci
       - run: npm audit --json > backend-npm-audit.json || true
       - run: node --check server.js
@@ -29,7 +31,9 @@ jobs:
         if: always()
         with:
           name: backend-npm-audit
-          path: backend/backend-npm-audit.json
+          path: |
+            backend/backend-npm-audit.json
+            backend/package-lock.json
 
   mobile:
     runs-on: ubuntu-latest
