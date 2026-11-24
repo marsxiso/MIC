@@ -296,6 +296,22 @@ app.post('/api/users', async (req, res) => {
   }
 });
 
+app.post('/api/users/:id/activation-code', async (req, res) => {
+  try {
+    if (!isAdmin(req)) return res.status(403).json({ ok: false, message: 'Только администратор может выдать код' });
+    const code = createActivationCode();
+    const result = await pool.query(
+      'UPDATE users SET password_hash = NULL, activation_code_hash = $1, activation_expires_at = $2 WHERE id = $3 RETURNING id, login',
+      [await hashActivationCode(code), activationExpiry(), toInt(req.params.id)]
+    );
+    if (!result.rows[0]) return res.status(404).json({ ok: false, message: 'Пользователь не найден' });
+    res.json({ ok: true, login: result.rows[0].login, activation_code: code });
+  } catch (error) {
+    console.error('ISSUE USER ACTIVATION CODE ERROR:', error);
+    res.status(500).json({ ok: false, message: 'Не удалось выдать код' });
+  }
+});
+
 app.put('/api/users/:id', async (req, res) => {
   try {
     const userId = toInt(req.params.id);
@@ -376,6 +392,22 @@ app.post('/api/workers', async (req, res) => {
   }
 });
 
+
+app.post('/api/workers/:id/activation-code', async (req, res) => {
+  try {
+    if (!isAdmin(req)) return res.status(403).json({ ok: false, message: 'Только администратор может выдать код' });
+    const code = createActivationCode();
+    const result = await pool.query(
+      'UPDATE workers SET password_hash = NULL, activation_code_hash = $1, activation_expires_at = $2 WHERE id = $3 RETURNING id, login',
+      [await hashActivationCode(code), activationExpiry(), toInt(req.params.id)]
+    );
+    if (!result.rows[0]) return res.status(404).json({ ok: false, message: 'Рабочий не найден' });
+    res.json({ ok: true, login: result.rows[0].login, activation_code: code });
+  } catch (error) {
+    console.error('ISSUE WORKER ACTIVATION CODE ERROR:', error);
+    res.status(500).json({ ok: false, message: 'Не удалось выдать код' });
+  }
+});
 
 app.put('/api/workers/:id', async (req, res) => {
   try {
