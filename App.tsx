@@ -16,6 +16,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 
 type Role = 'Производственный мастер' | 'Контролер' | 'Контрольный мастер' | 'Администратор' | 'Рабочий';
 type BatchStatus = 'Создана' | 'В процессе' | 'Готова к проверке' | 'Проверена' | 'Готова к отправке' | 'Отправлено на сборку';
@@ -923,11 +924,11 @@ export default function App() {
       try {
         const [rawUser, storedToken] = await Promise.all([
           AsyncStorage.getItem('lizun_current_user'),
-          AsyncStorage.getItem('mic_auth_token'),
+          SecureStore.getItemAsync('mic_auth_token'),
         ]);
         if (!storedToken || !rawUser) {
           await AsyncStorage.removeItem('lizun_current_user');
-          await AsyncStorage.removeItem('mic_auth_token');
+          await SecureStore.deleteItemAsync('mic_auth_token');
           if (mounted) setAppReady(true);
           return;
         }
@@ -1006,7 +1007,7 @@ export default function App() {
         return;
       }
       tokenRef.current = data.token;
-      await AsyncStorage.setItem('mic_auth_token', data.token);
+      await SecureStore.setItemAsync('mic_auth_token', data.token);
       const nextUser = {
         id: String(data.user.id),
         login: data.user.login || login.trim(),
