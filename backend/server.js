@@ -710,7 +710,6 @@ app.post('/api/batches/:id/send-to-assembly', async (req, res) => {
   try {
     if (!isUserIdentity(req) || !isProductionRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const batchId = toInt(req.params.id);
-    if (!isUserIdentity(req) || !isProductionRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const editorId = toInt(req.auth.sub);
     const batchResult = await pool.query('SELECT * FROM batches WHERE id = $1', [batchId]);
     const batch = batchResult.rows[0];
@@ -801,9 +800,7 @@ app.put('/api/shifts/:id', async (req, res) => {
     if (!isUserIdentity(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const shiftId = toInt(req.params.id);
     const editorId = toInt(req.auth.sub);
-    const editorRole = req.auth.role;
     const { shift_date, shift_type, employee_type, worker_id, user_id } = req.body;
-    if (!isUserIdentity(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const shiftResult = await pool.query('SELECT * FROM shifts WHERE id = $1', [shiftId]);
     const shift = shiftResult.rows[0];
     if (!shift) return res.status(404).json({ ok: false, message: 'Смена не найдена' });
@@ -817,8 +814,7 @@ app.put('/api/shifts/:id', async (req, res) => {
     const admin = isAdmin(req);
     const isProductionMasterEditingWorker = isProductionRole(req) && nextEmployeeType === 'worker';
     const isControlMasterEditingController = isControlMasterRole(req) && nextEmployeeType === 'controller';
-    const isOwner = String(shift.assigned_by || '') === String(editorId || '');
-    if (!admin && !isProductionMasterEditingWorker && !isControlMasterEditingController && !isOwner) {
+    if (!admin && !isProductionMasterEditingWorker && !isControlMasterEditingController) {
       return res.status(403).json({ ok: false, message: 'Нет прав на редактирование этой смены' });
     }
     if (!nextShiftDate || !['worker', 'controller'].includes(nextEmployeeType) || (nextEmployeeType === 'worker' && !nextWorkerId) || (nextEmployeeType === 'controller' && !nextUserId)) {
@@ -861,7 +857,6 @@ app.delete('/api/shifts/:id', async (req, res) => {
     if (!isUserIdentity(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const shiftId = toInt(req.params.id);
     const editorId = toInt(req.auth.sub);
-    const editorRole = req.auth.role;
     const shiftResult = await pool.query('SELECT * FROM shifts WHERE id = $1', [shiftId]);
     const shift = shiftResult.rows[0];
     if (!shift) return res.status(404).json({ ok: false, message: 'Смена не найдена' });
@@ -869,7 +864,7 @@ app.delete('/api/shifts/:id', async (req, res) => {
     const shiftEmployeeType = shift.employee_type || (shift.user_id ? 'controller' : 'worker');
     const isProductionMasterDeletingWorker = isProductionRole(req) && shiftEmployeeType === 'worker';
     const isControlMasterDeletingController = isControlMasterRole(req) && shiftEmployeeType === 'controller';
-    if (!admin && !isProductionMasterDeletingWorker && !isControlMasterDeletingController && String(shift.assigned_by || '') !== String(editorId || '')) {
+    if (!admin && !isProductionMasterDeletingWorker && !isControlMasterDeletingController) {
       return res.status(403).json({ ok: false, message: 'Нет прав на удаление этой смены' });
     }
     await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
