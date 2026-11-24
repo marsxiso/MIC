@@ -41,6 +41,12 @@ async function runSchema() {
   await pool.query(authMigration);
 }
 
+function isAdmin(req) { return ['Администратор', 'admin'].includes(req.auth?.role); }
+function isControlRole(req) { return ['Контролер', 'Контрольный мастер', 'controller', 'control_master', 'quality_master', 'admin', 'Администратор'].includes(req.auth?.role); }
+function isProductionRole(req) { return ['Производственный мастер', 'production_master', 'admin', 'Администратор'].includes(req.auth?.role); }
+function isUserIdentity(req) { return req.auth?.kind === 'user'; }
+function isWorkerIdentity(req) { return req.auth?.kind === 'worker'; }
+
 function toInt(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
@@ -407,7 +413,8 @@ app.get('/api/batches', async (req, res) => {
 
 app.post('/api/batches', async (req, res) => {
   try {
-    const { batch_number, product_name, quantity, created_by, assigned_worker_id, assigned_shift_type, manufacture_date } = req.body;
+    const { batch_number, product_name, quantity, assigned_worker_id, assigned_shift_type, manufacture_date } = req.body;
+    if (!isUserIdentity(req) || !isProductionRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     if (!batch_number || !product_name || !assigned_worker_id) {
       return res.status(400).json({ ok: false, message: 'Не все обязательные поля заполнены' });
     }
@@ -415,7 +422,7 @@ app.post('/api/batches', async (req, res) => {
       `INSERT INTO batches (batch_number, product_name, quantity, created_by, assigned_worker_id, assigned_shift_type, status, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, 'Создана', COALESCE($7::timestamptz, NOW()))
        RETURNING *`,
-      [batch_number, product_name.trim(), quantity || 0, created_by || null, assigned_worker_id, assigned_shift_type || 'day', manufacture_date || null]
+      [batch_number, product_name.trim(), quantity || 0, req.auth.sub, assigned_worker_id, assigned_shift_type || 'day', manufacture_date || null]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -427,7 +434,7 @@ app.post('/api/batches', async (req, res) => {
 app.put('/api/batches/:id', async (req, res) => {
   try {
     const batchId = toInt(req.params.id);
-    const editorId = toInt(req.body.editor_id);
+    const editorId = toInt(req.auth.sub);
     const { product_name, quantity, assigned_worker_id, manufacture_date, assigned_shift_type } = req.body;
     const batchResult = await pool.query('SELECT * FROM batches WHERE id = $1', [batchId]);
     const batch = batchResult.rows[0];
@@ -459,13 +466,13 @@ app.put('/api/batches/:id', async (req, res) => {
 app.delete('/api/batches/:id', async (req, res) => {
   try {
     const batchId = toInt(req.params.id);
-    const editorId = toInt(req.body.editor_id || req.query.editor_id);
-    const editorRole = req.body.editor_role || req.query.editor_role;
+    const editorId = toInt(req.auth.sub);
+    const editorRole = req.auth.role;
     const batchResult = await pool.query('SELECT * FROM batches WHERE id = $1', [batchId]);
     const batch = batchResult.rows[0];
     if (!batch) return res.status(404).json({ ok: false, message: 'Партия не найдена' });
-    const isAdmin = editorRole === 'Администратор' || editorRole === 'admin';
-    if (!isAdmin && String(batch.created_by || '') !== String(editorId || '')) {
+    const admin = isAdmin(req);
+    if (!admin && String(batch.created_by || '') !== String(editorId || '')) {
       return res.status(403).json({ ok: false, message: 'Можно удалять только свои партии' });
     }
     await pool.query('DELETE FROM batches WHERE id = $1', [batchId]);
@@ -479,7 +486,8 @@ app.delete('/api/batches/:id', async (req, res) => {
 app.post('/api/batches/:id/worker-accept', async (req, res) => {
   try {
     const batchId = toInt(req.params.id);
-    const workerId = toInt(req.body.worker_id);
+    if (!isWorkerIdentity(req)) return res.status(403).json({ ok: false, message: 'Только рабочий может выполнить эту операцию' });
+    const workerId = toInt(req.auth.sub);
     if (!batchId || !workerId) {
       return res.status(400).json({ ok: false, message: 'batch_id и worker_id обязательны' });
     }
@@ -541,7 +549,8 @@ app.post('/api/batches/:id/worker-complete', async (req, res) => {
 app.post('/api/batches/:id/accept', async (req, res) => {
   try {
     const batchId = toInt(req.params.id);
-    const userId = toInt(req.body.user_id);
+    if (!isUserIdentity(req) || !isControlRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
+    const userId = toInt(req.auth.sub);
     if (!batchId || !userId) {
       return res.status(400).json({ ok: false, message: 'batch_id и user_id обязательны' });
     }
@@ -602,7 +611,7 @@ app.post('/api/batches/:id/cancel-accept', async (req, res) => {
 app.post('/api/batches/:id/mark-ready-to-send', async (req, res) => {
   try {
     const batchId = toInt(req.params.id);
-    const editorId = toInt(req.body.editor_id);
+    const editorId = toInt(req.auth.sub);
     const batchResult = await pool.query('SELECT * FROM batches WHERE id = $1', [batchId]);
     const batch = batchResult.rows[0];
     if (!batch) return res.status(404).json({ ok: false, message: 'Партия не найдена' });
@@ -626,7 +635,8 @@ app.post('/api/batches/:id/mark-ready-to-send', async (req, res) => {
 app.post('/api/batches/:id/send-to-assembly', async (req, res) => {
   try {
     const batchId = toInt(req.params.id);
-    const editorId = toInt(req.body.editor_id);
+    if (!isUserIdentity(req) || !isControlRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
+    const editorId = toInt(req.auth.sub);
     const batchResult = await pool.query('SELECT * FROM batches WHERE id = $1', [batchId]);
     const batch = batchResult.rows[0];
     if (!batch) return res.status(404).json({ ok: false, message: 'Партия не найдена' });
@@ -673,7 +683,8 @@ app.get('/api/shifts', async (req, res) => {
 
 app.post('/api/shifts', async (req, res) => {
   try {
-    const { worker_id, user_id, shift_date, shift_type, assigned_by, employee_type } = req.body;
+    const { worker_id, user_id, shift_date, shift_type, employee_type } = req.body;
+    if (!isUserIdentity(req) || (employee_type === 'worker' && !isProductionRole(req)) || (employee_type === 'controller' && !isControlRole(req))) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     if (!shift_date || !shift_type || !employee_type) {
       return res.status(400).json({ ok: false, message: 'Не все обязательные поля заполнены' });
     }
@@ -701,7 +712,7 @@ app.post('/api/shifts', async (req, res) => {
       `INSERT INTO shifts (worker_id, user_id, shift_date, shift_type, assigned_by, employee_type, employee_name)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [worker_id || null, user_id || null, shift_date, shift_type, assigned_by || null, employee_type, employeeName]
+      [worker_id || null, user_id || null, shift_date, shift_type, req.auth.sub, employee_type, employeeName]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -714,8 +725,9 @@ app.put('/api/shifts/:id', async (req, res) => {
   try {
     const shiftId = toInt(req.params.id);
     const editorId = toInt(req.body.editor_id);
-    const editorRole = req.body.editor_role;
+    const editorRole = req.auth.role;
     const { shift_date, shift_type, employee_type, worker_id, user_id } = req.body;
+    if (!isUserIdentity(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const shiftResult = await pool.query('SELECT * FROM shifts WHERE id = $1', [shiftId]);
     const shift = shiftResult.rows[0];
     if (!shift) return res.status(404).json({ ok: false, message: 'Смена не найдена' });
@@ -726,11 +738,11 @@ app.put('/api/shifts/:id', async (req, res) => {
     const nextShiftDate = shift_date || shift.shift_date;
     const nextShiftType = shift_type || shift.shift_type || 'day';
 
-    const isAdmin = editorRole === 'Администратор' || editorRole === 'admin';
-    const isProductionMasterEditingWorker = editorRole === 'Производственный мастер' && nextEmployeeType === 'worker';
-    const isControlMasterEditingController = editorRole === 'Контрольный мастер' && nextEmployeeType === 'controller';
+    const admin = isAdmin(req);
+    const isProductionMasterEditingWorker = isProductionRole(req) && nextEmployeeType === 'worker';
+    const isControlMasterEditingController = isControlRole(req) && nextEmployeeType === 'controller';
     const isOwner = String(shift.assigned_by || '') === String(editorId || '');
-    if (!isAdmin && !isProductionMasterEditingWorker && !isControlMasterEditingController && !isOwner) {
+    if (!admin && !isProductionMasterEditingWorker && !isControlMasterEditingController && !isOwner) {
       return res.status(403).json({ ok: false, message: 'Нет прав на редактирование этой смены' });
     }
     if (!nextShiftDate || !nextEmployeeType || (nextEmployeeType === 'worker' && !nextWorkerId) || (nextEmployeeType === 'controller' && !nextUserId)) {
@@ -771,16 +783,16 @@ app.put('/api/shifts/:id', async (req, res) => {
 app.delete('/api/shifts/:id', async (req, res) => {
   try {
     const shiftId = toInt(req.params.id);
-    const editorId = toInt(req.body.editor_id || req.query.editor_id);
-    const editorRole = req.body.editor_role || req.query.editor_role;
+    const editorId = toInt(req.auth.sub);
+    const editorRole = req.auth.role;
     const shiftResult = await pool.query('SELECT * FROM shifts WHERE id = $1', [shiftId]);
     const shift = shiftResult.rows[0];
     if (!shift) return res.status(404).json({ ok: false, message: 'Смена не найдена' });
-    const isAdmin = editorRole === 'Администратор' || editorRole === 'admin';
+    const admin = isAdmin(req);
     const shiftEmployeeType = shift.employee_type || (shift.user_id ? 'controller' : 'worker');
-    const isProductionMasterDeletingWorker = editorRole === 'Производственный мастер' && shiftEmployeeType === 'worker';
-    const isControlMasterDeletingController = editorRole === 'Контрольный мастер' && shiftEmployeeType === 'controller';
-    if (!isAdmin && !isProductionMasterDeletingWorker && !isControlMasterDeletingController && String(shift.assigned_by || '') !== String(editorId || '')) {
+    const isProductionMasterDeletingWorker = isProductionRole(req) && shiftEmployeeType === 'worker';
+    const isControlMasterDeletingController = isControlRole(req) && shiftEmployeeType === 'controller';
+    if (!admin && !isProductionMasterDeletingWorker && !isControlMasterDeletingController && String(shift.assigned_by || '') !== String(editorId || '')) {
       return res.status(403).json({ ok: false, message: 'Нет прав на удаление этой смены' });
     }
     await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
@@ -839,12 +851,8 @@ app.post('/api/inspections', async (req, res) => {
       defects,
     } = req.body;
 
-    let resolvedInspectorId = toInt(inspector_id);
-    if (!resolvedInspectorId && inspector_name) {
-      const inspectorResult = await client.query('SELECT id FROM users WHERE full_name = $1 LIMIT 1', [inspector_name]);
-      resolvedInspectorId = toInt(inspectorResult.rows[0]?.id);
-    }
-
+    if (!isUserIdentity(req) || !isControlRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
+    let resolvedInspectorId = toInt(req.auth.sub);
     if (!batch_id || !resolvedInspectorId) {
       return res.status(400).json({ ok: false, message: 'batch_id и inspector_id обязательны' });
     }
@@ -961,6 +969,7 @@ app.put('/api/inspections/:id', async (req, res) => {
 
 app.put('/api/inspection-defects/:id/status', async (req, res) => {
   try {
+    if (!isUserIdentity(req) || !isControlRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const defectId = toInt(req.params.id);
     const { review_status } = req.body;
     if (!defectId || !review_status) {
@@ -983,7 +992,7 @@ app.put('/api/inspection-defects/:id/status', async (req, res) => {
   }
 });
 
-app.post('/api/upload-image', upload.single('file'), async (req, res) => {
+app.post('/api/upload-image', authenticate, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ ok: false, message: 'Файл не загружен' });
