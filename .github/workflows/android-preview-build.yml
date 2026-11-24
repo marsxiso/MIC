@@ -3,7 +3,7 @@ name: MIC Android preview build
 on:
   pull_request:
     branches:
-      - feature/expo-sdk-upgrade
+      - feature/secure-first-login
     types: [opened, synchronize, reopened]
 
 permissions:
