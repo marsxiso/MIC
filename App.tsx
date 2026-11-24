@@ -1237,7 +1237,7 @@ export default function App() {
     }, ...prev]);
     setDefectComment('');
     setInspectionForm((prev) => ({ ...prev, imageUri: '', rejectedCount: '0' }));
-    setInferenceState({ loading: false, defect: 'Неопределено', confidence: 0, summary: '' });
+    setManualDefectClass('Неопределено');
   };
 
   const removeDetectedDefect = (defectId: string) => setDetectedDefects((prev) => prev.filter((item) => item.id !== defectId));
