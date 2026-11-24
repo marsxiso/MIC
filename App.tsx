@@ -546,13 +546,22 @@ export default function App() {
   const [activationPasswordConfirm, setActivationPasswordConfirm] = useState('');
   const tokenRef = useRef('');
 
-  const apiFetch = (input: RequestInfo, init: RequestInit = {}) => fetch(input, {
+  const apiFetch = async (input: RequestInfo, init: RequestInit = {}) => {
+    const response = await fetch(input, {
     ...init,
     headers: {
       ...((init.headers || {}) as Record<string, string>),
       ...(tokenRef.current ? { Authorization: `Bearer ${tokenRef.current}` } : {}),
     },
-  });
+    });
+    if (response.status === 401) {
+      tokenRef.current = '';
+      await SecureStore.deleteItemAsync('mic_auth_token');
+      await AsyncStorage.removeItem('lizun_current_user');
+      setCurrentUser(null);
+    }
+    return response;
+  };
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [screen, setScreen] = useState<Screen>('dashboard');
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
