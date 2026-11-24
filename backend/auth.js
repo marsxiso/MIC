@@ -33,6 +33,11 @@ async function hashPassword(password) {
     error.status = 400;
     throw error;
   }
+  if (Buffer.byteLength(password, 'utf8') > 72) {
+    const error = new Error('Пароль слишком длинный для выбранного алгоритма');
+    error.status = 400;
+    throw error;
+  }
   return bcrypt.hash(password, BCRYPT_ROUNDS);
 }
 
@@ -51,7 +56,7 @@ function issueToken(identity) {
     kind: identity.kind,
     role: identity.role,
   };
-  return jwt.sign(payload, getJwtSecret(), { expiresIn: '2h', issuer: 'mic-api', audience: 'mic-app' });
+  return jwt.sign(payload, getJwtSecret(), { algorithm: 'HS256', expiresIn: '2h', issuer: 'mic-api', audience: 'mic-app' });
 }
 
 function authenticate(req, res, next) {
@@ -62,6 +67,7 @@ function authenticate(req, res, next) {
     req.auth = jwt.verify(match[1], getJwtSecret(), {
       issuer: 'mic-api',
       audience: 'mic-app',
+      algorithms: ['HS256'],
     });
     next();
   } catch {
