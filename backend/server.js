@@ -203,6 +203,58 @@ async function clearAuthFailures(login, ip) {
   ]);
 }
 
+// One-time initial administrator bootstrap. Configure MIC_BOOTSTRAP_SECRET only for setup,
+// call this endpoint once, then remove the secret from the Render environment.
+app.post('/auth/bootstrap-admin', async (req, res) => {
+  const configuredSecret = process.env.MIC_BOOTSTRAP_SECRET || '';
+  const suppliedSecret = req.get('x-mic-bootstrap-secret') || '';
+  if (Buffer.byteLength(configuredSecret, 'utf8') < 32 ||
+      Buffer.byteLength(suppliedSecret, 'utf8') !== Buffer.byteLength(configuredSecret, 'utf8') ||
+      !require('crypto').timingSafeEqual(Buffer.from(suppliedSecret), Buffer.from(configuredSecret))) {
+    return res.status(404).json({ ok: false, message: 'Not found' });
+  }
+
+  const { login, full_name, password } = req.body || {};
+  if (!login || !full_name || typeof password !== 'string' || password.length < 12 || Buffer.byteLength(password, 'utf8') > 72) {
+    return res.status(400).json({ ok: false, message: 'Укажите имя, логин и пароль длиной от 12 до 72 байт' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(734921, 1)');
+    const existing = await client.query('SELECT id FROM users LIMIT 1');
+    if (existing.rowCount > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, message: 'Администратор или пользователь уже существует' });
+    }
+    const normalizedLogin = String(login).trim();
+    const normalizedName = String(full_name).trim();
+    if (!normalizedLogin || !normalizedName) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ ok: false, message: 'Имя и логин не могут быть пустыми' });
+    }
+    const duplicate = await client.query('SELECT id FROM workers WHERE login = $1 LIMIT 1', [normalizedLogin]);
+    if (duplicate.rowCount > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, message: 'Этот логин уже занят' });
+    }
+    const passwordHash = await hashPassword(password);
+    const created = await client.query(
+      "INSERT INTO users (full_name, login, password_hash, role) VALUES ($1, $2, $3, 'Администратор') RETURNING id, full_name, login, role",
+      [normalizedName, normalizedLogin, passwordHash]
+    );
+    await client.query('COMMIT');
+    return res.status(201).json({ ok: true, user: created.rows[0], message: 'Первый администратор создан. Удалите MIC_BOOTSTRAP_SECRET из Render Environment.' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('BOOTSTRAP ADMIN ERROR:', error);
+    return res.status(500).json({ ok: false, message: 'Не удалось создать администратора' });
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/auth/activate', async (req, res) => {
   const { login, activation_code, password, password_confirm } = req.body || {};
   if (!login || !activation_code || !password || password !== password_confirm) {
