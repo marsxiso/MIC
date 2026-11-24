@@ -23,6 +23,7 @@ async function main() {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(734921, 1)');
     const existing = await client.query('SELECT id FROM users LIMIT 1');
     if (existing.rowCount > 0) {
       throw new Error('Bootstrap refused: a user account already exists.');
