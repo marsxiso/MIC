@@ -2216,11 +2216,11 @@ export default function App() {
                       {DEFECT_CLASS_OPTIONS.map((defectClass) => (
                         <Pressable
                           key={defectClass}
-                          style={[styles.filterButton, manualDefectClass === defectClass && styles.filterButtonActive]}
+                          style={[styles.manualDefectOption, manualDefectClass === defectClass && styles.manualDefectOptionActive]}
                           onPress={() => setManualDefectClass(defectClass)}
                           disabled={inspectionLocked}
                         >
-                          <Text style={styles.filterButtonText}>{defectClass}</Text>
+                          <Text style={styles.manualDefectOptionText}>{defectClass}</Text>
                         </Pressable>
                       ))}
                     </View>
@@ -2508,7 +2508,7 @@ export default function App() {
                             {inspection.defects.map((defect) => (
                               <View key={defect.id} style={styles.historyItem}>
                                 <Text style={styles.text}>• {defect.defectClass} — {defect.affectedCount} шт.</Text>
-                                <Text style={styles.text}>Уверенность AI: {(defect.confidence * 100).toFixed(1)}%</Text>
+                                <Text style={styles.text}>Класс дефекта: {defect.defectClass}</Text>
                                 <Text style={styles.text}>Комментарий: {defect.comment || '—'}</Text>
                                 <Text style={styles.text}>Статус: {defect.reviewStatus}</Text>
 
@@ -2817,6 +2817,9 @@ const styles = StyleSheet.create({
   dropdownItemText: { color: COLORS.text, fontSize: 15, fontWeight: '600' },
   dropdownItemTextActive: { color: '#dbeafe' },
   filterRow: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  manualDefectOption: { backgroundColor: COLORS.soft, borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingVertical: 9, paddingHorizontal: 12 },
+  manualDefectOptionActive: { backgroundColor: '#1e40af', borderColor: '#3b82f6' },
+  manualDefectOptionText: { color: COLORS.text, fontWeight: '700' },
   filterChip: { flexGrow: 1, flexBasis: '45%', minWidth: 130, minHeight: 42, paddingVertical: 9, paddingHorizontal: 12, borderRadius: 999, backgroundColor: '#0b1220', borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
   filterChipActive: { backgroundColor: '#1e40af', borderColor: '#3b82f6' },
   filterChipText: { color: COLORS.text, fontWeight: '700', fontSize: 12, textAlign: 'center' },
