@@ -159,28 +159,49 @@ app.get('/api/health', async (req, res) => {
 });
 
 async function authIsLocked(login, ip) {
-  const result = await pool.query(
-    'SELECT locked_until FROM auth_attempts WHERE login_key = $1 AND ip_key = $2',
-    [String(login).trim().toLowerCase(), String(ip || 'unknown')]
-  );
-  return !!result.rows[0]?.locked_until && new Date(result.rows[0].locked_until) > new Date();
+  const loginKey = String(login).trim().toLowerCase();
+  const ipKey = String(ip || 'unknown');
+  const [accountResult, ipResult] = await Promise.all([
+    pool.query('SELECT locked_until FROM auth_login_attempts WHERE login_key = $1', [loginKey]),
+    pool.query('SELECT locked_until FROM auth_attempts WHERE login_key = $1 AND ip_key = $2', [loginKey, ipKey]),
+  ]);
+  const accountLocked = accountResult.rows[0]?.locked_until && new Date(accountResult.rows[0].locked_until) > new Date();
+  const ipLocked = ipResult.rows[0]?.locked_until && new Date(ipResult.rows[0].locked_until) > new Date();
+  return !!(accountLocked || ipLocked);
 }
 
 async function recordAuthFailure(login, ip) {
-  await pool.query(
-    `INSERT INTO auth_attempts (login_key, ip_key, failed_count, locked_until, updated_at)
-     VALUES ($1, $2, 1, NULL, NOW())
-     ON CONFLICT (login_key, ip_key) DO UPDATE SET
-       failed_count = CASE WHEN auth_attempts.locked_until IS NOT NULL AND auth_attempts.locked_until <= NOW() THEN 1 ELSE auth_attempts.failed_count + 1 END,
-       locked_until = CASE WHEN auth_attempts.locked_until IS NOT NULL AND auth_attempts.locked_until <= NOW() THEN NULL WHEN auth_attempts.failed_count >= 4 THEN NOW() + INTERVAL '15 minutes' ELSE NULL END,
-       updated_at = NOW()`,
-    [String(login).trim().toLowerCase(), String(ip || 'unknown')]
-  );
+  const loginKey = String(login).trim().toLowerCase();
+  const ipKey = String(ip || 'unknown');
+  await Promise.all([
+    pool.query(
+      `INSERT INTO auth_login_attempts (login_key, failed_count, locked_until, updated_at)
+       VALUES ($1, 1, NULL, NOW())
+       ON CONFLICT (login_key) DO UPDATE SET
+         failed_count = CASE WHEN auth_login_attempts.locked_until IS NOT NULL AND auth_login_attempts.locked_until <= NOW() THEN 1 ELSE auth_login_attempts.failed_count + 1 END,
+         locked_until = CASE WHEN auth_login_attempts.locked_until IS NOT NULL AND auth_login_attempts.locked_until <= NOW() THEN NULL WHEN auth_login_attempts.failed_count >= 4 THEN NOW() + INTERVAL '15 minutes' ELSE NULL END,
+         updated_at = NOW()`,
+      [loginKey]
+    ),
+    pool.query(
+      `INSERT INTO auth_attempts (login_key, ip_key, failed_count, locked_until, updated_at)
+       VALUES ($1, $2, 1, NULL, NOW())
+       ON CONFLICT (login_key, ip_key) DO UPDATE SET
+         failed_count = CASE WHEN auth_attempts.locked_until IS NOT NULL AND auth_attempts.locked_until <= NOW() THEN 1 ELSE auth_attempts.failed_count + 1 END,
+         locked_until = CASE WHEN auth_attempts.locked_until IS NOT NULL AND auth_attempts.locked_until <= NOW() THEN NULL WHEN auth_attempts.failed_count >= 4 THEN NOW() + INTERVAL '15 minutes' ELSE NULL END,
+         updated_at = NOW()`,
+      [loginKey, ipKey]
+    ),
+  ]);
 }
 
 async function clearAuthFailures(login, ip) {
-  await pool.query('DELETE FROM auth_attempts WHERE login_key = $1 AND ip_key = $2',
-    [String(login).trim().toLowerCase(), String(ip || 'unknown')]);
+  const loginKey = String(login).trim().toLowerCase();
+  const ipKey = String(ip || 'unknown');
+  await Promise.all([
+    pool.query('DELETE FROM auth_login_attempts WHERE login_key = $1', [loginKey]),
+    pool.query('DELETE FROM auth_attempts WHERE login_key = $1 AND ip_key = $2', [loginKey, ipKey]),
+  ]);
 }
 
 app.post('/auth/activate', async (req, res) => {
