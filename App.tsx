@@ -540,7 +540,6 @@ export default function App() {
   const [activationCode, setActivationCode] = useState('');
   const [activationPassword, setActivationPassword] = useState('');
   const [activationPasswordConfirm, setActivationPasswordConfirm] = useState('');
-  const [token, setToken] = useState('');
   const tokenRef = useRef('');
 
   const apiFetch = (input: RequestInfo, init: RequestInit = {}) => fetch(input, {
@@ -928,7 +927,6 @@ export default function App() {
         ]);
         if (!storedToken || !rawUser) {
           await AsyncStorage.removeItem('lizun_current_user');
-    await AsyncStorage.removeItem('mic_auth_token');
           await AsyncStorage.removeItem('mic_auth_token');
           if (mounted) setAppReady(true);
           return;
@@ -936,7 +934,6 @@ export default function App() {
         const restoredUser = JSON.parse(rawUser) as User;
         if (mounted) {
           tokenRef.current = storedToken;
-          setToken(storedToken);
           setCurrentUser(restoredUser);
         }
         await syncAllFromServer();
@@ -946,7 +943,6 @@ export default function App() {
         await AsyncStorage.removeItem('mic_auth_token');
         if (mounted) {
           tokenRef.current = '';
-          setToken('');
           setCurrentUser(null);
         }
       } finally {
@@ -1010,7 +1006,6 @@ export default function App() {
         return;
       }
       tokenRef.current = data.token;
-      setToken(data.token);
       await AsyncStorage.setItem('mic_auth_token', data.token);
       const nextUser = {
         id: String(data.user.id),
@@ -1068,13 +1063,13 @@ export default function App() {
 
   const handleLogout = async () => {
     await AsyncStorage.removeItem('lizun_current_user');
+    await AsyncStorage.removeItem('mic_auth_token');
     setCurrentUser(null);
     setSelectedBatchId(null);
     setEditingBatchId(null);
     setEditingShiftId(null);
     setReportSelectedBatchId(null);
     tokenRef.current = '';
-    setToken('');
     setLogin('');
     setPassword('');
     setCameraOpen(false);
