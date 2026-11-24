@@ -1,4 +1,5 @@
 name: MIC Android preview build
+# Triggered from the base branch workflow on pull request updates.
 
 on:
   workflow_dispatch:
