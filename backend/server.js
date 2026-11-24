@@ -909,6 +909,7 @@ app.post('/api/inspections', async (req, res) => {
 app.put('/api/inspections/:id', async (req, res) => {
   const client = await pool.connect();
   try {
+    if (!isUserIdentity(req) || !isControlRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const inspectionId = toInt(req.params.id);
     const editorId = toInt(req.auth.sub);
     const {
