@@ -276,7 +276,7 @@ function makeAiSummary(rawLabel: string | undefined, defect: DefectClass, confid
   return `Обнаружен дефект "${defect}" с вероятностью ${percent}%`;
 }
 
-async function analyzeDefectViaApi(imageUri: string): Promise<{ defect: DefectClass; confidence: number; summary?: string }> {
+async function analyzeDefectViaApi(imageUri: string, authToken: string): Promise<{ defect: DefectClass; confidence: number; summary?: string }> {
   const formData = new FormData();
   formData.append(
     'file',
@@ -291,8 +291,9 @@ async function analyzeDefectViaApi(imageUri: string): Promise<{ defect: DefectCl
   const timeoutId = setTimeout(() => controller.abort(), 30000);
 
   try {
-    const response = await apiFetch(`${API_URL}/analyze-defect`, {
+    const response = await fetch(`${API_URL}/analyze-defect`, {
       method: 'POST',
+      headers: { Authorization: `Bearer ${authToken}` },
       body: formData,
       signal: controller.signal,
     });
@@ -334,7 +335,7 @@ async function analyzeDefectViaApi(imageUri: string): Promise<{ defect: DefectCl
   }
 }
 
-async function uploadDefectImageToApi(imageUri: string): Promise<string> {
+async function uploadDefectImageToApi(imageUri: string, authToken: string): Promise<string> {
   let preparedUri = imageUri;
   try {
     const manipulated = await ImageManipulator.manipulateAsync(
@@ -361,8 +362,9 @@ async function uploadDefectImageToApi(imageUri: string): Promise<string> {
     } as any,
   );
 
-  const response = await apiFetch(`${API_URL}/api/upload-image`, {
+  const response = await fetch(`${API_URL}/api/upload-image`, {
     method: 'POST',
+    headers: { Authorization: `Bearer ${authToken}` },
     body: formData,
   });
 
@@ -910,7 +912,7 @@ export default function App() {
         confidence: Number(defect.confidence || 0),
         affectedCount: Number(defect.affected_count || 0),
         comment: defect.comment || '',
-        reviewStatus: normalizeDefectReviewStatus(defect.review_status),
+        reviewStatus: normalizeDefectReviewStatus(defect.review_status || undefined),
         imageUri: defect.image_uri || undefined,
       })),
       acceptedCount: Number(item.accepted_count || 0),
@@ -1043,7 +1045,6 @@ export default function App() {
         return;
       }
       tokenRef.current = data.token;
-      setToken(data.token);
       await AsyncStorage.setItem('mic_auth_token', data.token);
       const nextUser = {
         id: String(data.user.id),
@@ -1297,7 +1298,7 @@ export default function App() {
     }
     try {
       setInferenceState({ loading: true, defect: 'Неопределено', confidence: 0, summary: '' });
-      const result = await analyzeDefectViaApi(inspectionForm.imageUri);
+      const result = await analyzeDefectViaApi(inspectionForm.imageUri, tokenRef.current);
       setInferenceState({ loading: false, defect: result.defect, confidence: result.confidence, summary: result.summary || '' });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Не удалось получить ответ от AI API';
@@ -1348,7 +1349,7 @@ export default function App() {
           if (!isLocalImageUri(item.imageUri)) {
             return item;
           }
-          const uploadedImageUri = await uploadDefectImageToApi(item.imageUri!);
+          const uploadedImageUri = await uploadDefectImageToApi(item.imageUri!, tokenRef.current);
           return { ...item, imageUri: uploadedImageUri };
         }),
       );
@@ -2925,8 +2926,5 @@ const styles = StyleSheet.create({
   filterStatusButton: { width: '100%', minHeight: 42, backgroundColor: '#0b1220', borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   filterStatusButtonText: { color: COLORS.text, fontSize: 13, fontWeight: '700', flex: 1 },
   filterStatusChevron: { color: COLORS.muted, fontSize: 18, marginLeft: 8 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(2, 6, 23, 0.75)', justifyContent: 'center', padding: 24 },
-  modalCard: { backgroundColor: COLORS.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: COLORS.border },
-  modalTitle: { color: COLORS.text, fontSize: 18, fontWeight: '700', marginBottom: 12 },
 
 });
