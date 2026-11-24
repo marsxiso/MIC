@@ -33,4 +33,4 @@ jobs:
         with:
           node-version: 20
       - run: npm install
-      - run: npx tsc --noEmit --strict --skipLibCheck --jsx react-native --target esnext --moduleResolution node App.tsx
+      - run: npx tsc --noEmit --strict --skipLibCheck --allowSyntheticDefaultImports --jsx react-native --target esnext --moduleResolution node App.tsx
