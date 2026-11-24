@@ -46,7 +46,6 @@ jobs:
       - run: npm install expo@~52.0.0
       - run: npx expo install --fix
       - run: npm install --package-lock-only --ignore-scripts
-      - run: npm audit fix --package-lock-only || true
       - run: npm ci
       - run: npx expo-doctor
       - run: npm audit --json > mobile-npm-audit.json || true
@@ -75,7 +74,6 @@ jobs:
       - run: npm install expo@~52.0.0
       - run: npx expo install --fix
       - run: npm install --package-lock-only --ignore-scripts
-      - run: npm audit fix --package-lock-only || true
       - run: npm --prefix backend install --package-lock-only --ignore-scripts
       - run: npm --prefix backend audit fix --package-lock-only || true
       - name: Commit refreshed lockfiles
