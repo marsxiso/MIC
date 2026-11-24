@@ -439,7 +439,7 @@ app.put('/api/batches/:id', async (req, res) => {
     const batchResult = await pool.query('SELECT * FROM batches WHERE id = $1', [batchId]);
     const batch = batchResult.rows[0];
     if (!batch) return res.status(404).json({ ok: false, message: 'Партия не найдена' });
-    if (String(batch.created_by || '') !== String(editorId || '')) {
+    if (!isAdmin(req) && String(batch.created_by || '') !== String(editorId || '')) {
       return res.status(403).json({ ok: false, message: 'Можно редактировать только свои партии' });
     }
     if (batch.status !== 'Создана') {
@@ -518,7 +518,8 @@ app.post('/api/batches/:id/worker-accept', async (req, res) => {
 app.post('/api/batches/:id/worker-complete', async (req, res) => {
   try {
     const batchId = toInt(req.params.id);
-    const workerId = toInt(req.body.worker_id);
+    if (!isWorkerIdentity(req)) return res.status(403).json({ ok: false, message: 'Только рабочий может выполнить эту операцию' });
+    const workerId = toInt(req.auth.sub);
     if (!batchId || !workerId) {
       return res.status(400).json({ ok: false, message: 'batch_id и worker_id обязательны' });
     }
@@ -580,7 +581,8 @@ app.post('/api/batches/:id/accept', async (req, res) => {
 app.post('/api/batches/:id/cancel-accept', async (req, res) => {
   try {
     const batchId = toInt(req.params.id);
-    const userId = toInt(req.body.user_id);
+    if (!isUserIdentity(req) || !isControlRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
+    const userId = toInt(req.auth.sub);
     if (!batchId || !userId) {
       return res.status(400).json({ ok: false, message: 'batch_id и user_id обязательны' });
     }
@@ -615,7 +617,7 @@ app.post('/api/batches/:id/mark-ready-to-send', async (req, res) => {
     const batchResult = await pool.query('SELECT * FROM batches WHERE id = $1', [batchId]);
     const batch = batchResult.rows[0];
     if (!batch) return res.status(404).json({ ok: false, message: 'Партия не найдена' });
-    if (String(batch.created_by || '') !== String(editorId || '')) {
+    if (!isAdmin(req) && String(batch.created_by || '') !== String(editorId || '')) {
       return res.status(403).json({ ok: false, message: 'Подготовить к отправке может только создатель партии' });
     }
     if (batch.status !== 'Проверена') {
@@ -640,7 +642,7 @@ app.post('/api/batches/:id/send-to-assembly', async (req, res) => {
     const batchResult = await pool.query('SELECT * FROM batches WHERE id = $1', [batchId]);
     const batch = batchResult.rows[0];
     if (!batch) return res.status(404).json({ ok: false, message: 'Партия не найдена' });
-    if (String(batch.created_by || '') !== String(editorId || '')) {
+    if (!isAdmin(req) && String(batch.created_by || '') !== String(editorId || '')) {
       return res.status(403).json({ ok: false, message: 'Отправить на сборку может только создатель партии' });
     }
     if (batch.status !== 'Готова к отправке') {
@@ -724,7 +726,7 @@ app.post('/api/shifts', async (req, res) => {
 app.put('/api/shifts/:id', async (req, res) => {
   try {
     const shiftId = toInt(req.params.id);
-    const editorId = toInt(req.body.editor_id);
+    const editorId = toInt(req.auth.sub);
     const editorRole = req.auth.role;
     const { shift_date, shift_type, employee_type, worker_id, user_id } = req.body;
     if (!isUserIdentity(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
@@ -908,7 +910,7 @@ app.put('/api/inspections/:id', async (req, res) => {
   const client = await pool.connect();
   try {
     const inspectionId = toInt(req.params.id);
-    const editorId = toInt(req.body.editor_id);
+    const editorId = toInt(req.auth.sub);
     const {
       visual_conclusion,
       geometry_conclusion,
