@@ -23,15 +23,5 @@
   },
   "submit": {
     "production": {}
-  },
-  "build": {
-    "preview": {
-      "distribution": "internal"
-    },
-    "apk": {
-      "android": {
-        "buildType": "apk"
-      }
-    }
   }
 }
