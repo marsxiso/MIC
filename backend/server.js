@@ -255,6 +255,38 @@ app.post('/auth/bootstrap-admin', async (req, res) => {
   }
 });
 
+// Temporary, secret-guarded recovery for an existing administrator who lost the activation code.
+// Remove MIC_BOOTSTRAP_SECRET from Render immediately after using this endpoint.
+app.post('/auth/recover-admin-code', async (req, res) => {
+  const configuredSecret = process.env.MIC_BOOTSTRAP_SECRET || '';
+  const suppliedSecret = req.get('x-mic-bootstrap-secret') || '';
+  if (Buffer.byteLength(configuredSecret, 'utf8') < 32 ||
+      Buffer.byteLength(suppliedSecret, 'utf8') !== Buffer.byteLength(configuredSecret, 'utf8') ||
+      !require('crypto').timingSafeEqual(Buffer.from(suppliedSecret), Buffer.from(configuredSecret))) {
+    return res.status(404).json({ ok: false, message: 'Not found' });
+  }
+  try {
+    const login = String((req.body || {}).login || '').trim();
+    if (!login) return res.status(400).json({ ok: false, message: 'Укажите логин администратора' });
+    const result = await pool.query(
+      "SELECT id, login FROM users WHERE login = $1 AND role IN ('Администратор', 'admin') LIMIT 1",
+      [login]
+    );
+    if (!result.rowCount) return res.status(404).json({ ok: false, message: 'Администратор не найден' });
+    const code = createActivationCode();
+    const codeHash = await hashActivationCode(code);
+    const expiresAt = activationExpiry();
+    await pool.query(
+      'UPDATE users SET password_hash = NULL, activation_code_hash = $1, activation_expires_at = $2 WHERE id = $3',
+      [codeHash, expiresAt, result.rows[0].id]
+    );
+    return res.json({ ok: true, login: result.rows[0].login, activation_code: code, message: 'Выдан новый одноразовый код. Удалите MIC_BOOTSTRAP_SECRET из Render Environment.' });
+  } catch (error) {
+    console.error('ADMIN RECOVERY ERROR:', error);
+    return res.status(500).json({ ok: false, message: 'Не удалось выдать код восстановления' });
+  }
+});
+
 app.post('/auth/activate', async (req, res) => {
   const { login, activation_code, password, password_confirm } = req.body || {};
   if (!login || !activation_code || !password || password !== password_confirm) {
