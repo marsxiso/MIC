@@ -537,12 +537,13 @@ export default function App() {
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [token, setToken] = useState('');
+  const tokenRef = useRef('');
 
   const apiFetch = (input: RequestInfo, init: RequestInit = {}) => fetch(input, {
     ...init,
     headers: {
       ...((init.headers || {}) as Record<string, string>),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(tokenRef.current ? { Authorization: `Bearer ${tokenRef.current}` } : {}),
     },
   });
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -929,6 +930,7 @@ export default function App() {
         }
         const restoredUser = JSON.parse(rawUser) as User;
         if (mounted) {
+          tokenRef.current = storedToken;
           setToken(storedToken);
           setCurrentUser(restoredUser);
         }
@@ -938,6 +940,7 @@ export default function App() {
         await AsyncStorage.removeItem('lizun_current_user');
         await AsyncStorage.removeItem('mic_auth_token');
         if (mounted) {
+          tokenRef.current = '';
           setToken('');
           setCurrentUser(null);
         }
@@ -1001,6 +1004,7 @@ export default function App() {
         Alert.alert('Ошибка', data?.message || 'Неверный логин или пароль');
         return;
       }
+      tokenRef.current = data.token;
       setToken(data.token);
       await AsyncStorage.setItem('mic_auth_token', data.token);
       const nextUser = {
@@ -1025,6 +1029,7 @@ export default function App() {
     setEditingBatchId(null);
     setEditingShiftId(null);
     setReportSelectedBatchId(null);
+    tokenRef.current = '';
     setToken('');
     setLogin('');
     setPassword('');
