@@ -27,3 +27,11 @@ CREATE TABLE IF NOT EXISTS auth_attempts (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (login_key, ip_key)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_login_unique_idx
+  ON users (login)
+  WHERE login IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS workers_login_unique_idx
+  ON workers (login)
+  WHERE login IS NOT NULL;
