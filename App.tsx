@@ -1548,6 +1548,35 @@ export default function App() {
   };
 
 
+  const createUser = async () => {
+    if (!userForm.name.trim() || !userForm.login.trim()) {
+      Alert.alert('Ошибка', 'Введите имя и логин');
+      return;
+    }
+    try {
+      const response = await apiFetch(`${API_URL}/api/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          full_name: userForm.name.trim(),
+          login: userForm.login.trim(),
+          role: userForm.role,
+        }),
+      });
+      const data = await readJson(response);
+      if (!response.ok) {
+        Alert.alert('Ошибка', data?.message || 'Не удалось создать пользователя');
+        return;
+      }
+      await syncAllFromServer();
+      setCreatingUser(false);
+      setUserForm({ name: '', login: '', password: '', role: 'Контролер' });
+      Alert.alert('Учётная запись создана', `Логин: ${data.login}\nОдноразовый код: ${data.activation_code || 'не получен'}\nПередайте код сотруднику. Он действует 15 минут.`);
+    } catch {
+      Alert.alert('Ошибка', 'Не удалось создать пользователя');
+    }
+  };
+
   const startEditUser = (user: User) => {
     setEditingUserId(user.id);
     setUserForm({ name: user.name, login: user.login, password: '', role: user.role });
@@ -2673,14 +2702,14 @@ export default function App() {
               <SectionTitle title="Панель администратора" />
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Пользователи</Text>
+                {!editingUserId && !creatingUser && <Pressable style={styles.primaryButton} onPress={() => { setCreatingUser(true); setUserForm({ name: '', login: '', password: '', role: 'Контролер' }); }}><Text style={styles.primaryButtonText}>Добавить пользователя</Text></Pressable>}
                 {(editingUserId || creatingUser) && (
                   <View style={styles.cardSoft}>
                     <Label text="Имя" />
                     <TextInput style={styles.input} value={userForm.name} onChangeText={(value) => setUserForm((prev) => ({ ...prev, name: value }))} />
                     <Label text="Логин" />
                     <TextInput style={styles.input} value={userForm.login} onChangeText={(value) => setUserForm((prev) => ({ ...prev, login: value }))} />
-                    <Label text="Новый пароль" />
-                    <TextInput style={styles.input} value={userForm.password} onChangeText={(value) => setUserForm((prev) => ({ ...prev, password: value }))} placeholder="Оставьте пустым, чтобы не менять" placeholderTextColor={COLORS.muted} />
+                    {!creatingUser && <><Label text="Новый пароль" /><TextInput style={styles.input} secureTextEntry value={userForm.password} onChangeText={(value) => setUserForm((prev) => ({ ...prev, password: value }))} placeholder="Оставьте пустым, чтобы не менять" placeholderTextColor={COLORS.muted} /></>}
                     <Label text="Роль" />
                     <View style={styles.roleRow}>
                       {(['Администратор', 'Производственный мастер', 'Контрольный мастер', 'Контролер'] as Role[]).map((role) => (
@@ -2689,8 +2718,8 @@ export default function App() {
                         </Pressable>
                       ))}
                     </View>
-                    <Pressable style={styles.primaryButton} onPress={saveUser}>
-                      <Text style={styles.primaryButtonText}>Сохранить пользователя</Text>
+                    <Pressable style={styles.primaryButton} onPress={creatingUser ? createUser : saveUser}>
+                      <Text style={styles.primaryButtonText}>{creatingUser ? 'Создать пользователя' : 'Сохранить пользователя'}
                     </Pressable>
                     <Pressable style={styles.secondaryButton} onPress={() => { setEditingUserId(null); setCreatingUser(false); setUserForm({ name: '', login: '', password: '', role: 'Контролер' }); }}>
                       <Text style={styles.secondaryButtonText}>Отмена</Text>
