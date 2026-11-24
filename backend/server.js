@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const { Pool } = require('pg');
-const { authenticate, issueToken, verifyPassword, hashPassword, createActivationCode, hashActivationCode, verifyActivationCode, activationExpiry } = require('./auth');
+const { authenticate, issueToken, verifyPassword, hashPassword, createActivationCode, hashActivationCode, verifyActivationCode, activationExpiry, getJwtSecret } = require('./auth');
 
 const app = express();
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -1108,6 +1108,7 @@ const PORT = process.env.PORT || 8000;
 
 runSchema()
   .then(() => {
+    getJwtSecret();
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`Server started on port ${PORT}`);
     });
