@@ -728,7 +728,7 @@ app.post('/api/shifts', async (req, res) => {
   try {
     const { worker_id, user_id, shift_date, shift_type, employee_type } = req.body;
     if (!isUserIdentity(req) || (employee_type === 'worker' && !isProductionRole(req)) || (employee_type === 'controller' && !isControlRole(req))) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
-    if (!shift_date || !shift_type || !employee_type) {
+    if (!shift_date || !shift_type || !['worker', 'controller'].includes(employee_type)) {
       return res.status(400).json({ ok: false, message: 'Не все обязательные поля заполнены' });
     }
     if (employee_type === 'worker' && !worker_id) {
@@ -789,7 +789,7 @@ app.put('/api/shifts/:id', async (req, res) => {
     if (!admin && !isProductionMasterEditingWorker && !isControlMasterEditingController && !isOwner) {
       return res.status(403).json({ ok: false, message: 'Нет прав на редактирование этой смены' });
     }
-    if (!nextShiftDate || !nextEmployeeType || (nextEmployeeType === 'worker' && !nextWorkerId) || (nextEmployeeType === 'controller' && !nextUserId)) {
+    if (!nextShiftDate || !['worker', 'controller'].includes(nextEmployeeType) || (nextEmployeeType === 'worker' && !nextWorkerId) || (nextEmployeeType === 'controller' && !nextUserId)) {
       return res.status(400).json({ ok: false, message: 'Заполните дату и сотрудника' });
     }
 
