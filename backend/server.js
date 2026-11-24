@@ -433,6 +433,7 @@ app.post('/api/batches', async (req, res) => {
 
 app.put('/api/batches/:id', async (req, res) => {
   try {
+    if (!isUserIdentity(req) || !isProductionRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const batchId = toInt(req.params.id);
     const editorId = toInt(req.auth.sub);
     const { product_name, quantity, assigned_worker_id, manufacture_date, assigned_shift_type } = req.body;
@@ -465,6 +466,7 @@ app.put('/api/batches/:id', async (req, res) => {
 
 app.delete('/api/batches/:id', async (req, res) => {
   try {
+    if (!isUserIdentity(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const batchId = toInt(req.params.id);
     const editorId = toInt(req.auth.sub);
     const editorRole = req.auth.role;
@@ -612,6 +614,7 @@ app.post('/api/batches/:id/cancel-accept', async (req, res) => {
 
 app.post('/api/batches/:id/mark-ready-to-send', async (req, res) => {
   try {
+    if (!isUserIdentity(req) || !isProductionRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const batchId = toInt(req.params.id);
     const editorId = toInt(req.auth.sub);
     const batchResult = await pool.query('SELECT * FROM batches WHERE id = $1', [batchId]);
@@ -636,8 +639,9 @@ app.post('/api/batches/:id/mark-ready-to-send', async (req, res) => {
 
 app.post('/api/batches/:id/send-to-assembly', async (req, res) => {
   try {
+    if (!isUserIdentity(req) || !isProductionRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const batchId = toInt(req.params.id);
-    if (!isUserIdentity(req) || !isControlRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
+    if (!isUserIdentity(req) || !isProductionRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const editorId = toInt(req.auth.sub);
     const batchResult = await pool.query('SELECT * FROM batches WHERE id = $1', [batchId]);
     const batch = batchResult.rows[0];
@@ -725,6 +729,7 @@ app.post('/api/shifts', async (req, res) => {
 
 app.put('/api/shifts/:id', async (req, res) => {
   try {
+    if (!isUserIdentity(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const shiftId = toInt(req.params.id);
     const editorId = toInt(req.auth.sub);
     const editorRole = req.auth.role;
@@ -784,6 +789,7 @@ app.put('/api/shifts/:id', async (req, res) => {
 
 app.delete('/api/shifts/:id', async (req, res) => {
   try {
+    if (!isUserIdentity(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const shiftId = toInt(req.params.id);
     const editorId = toInt(req.auth.sub);
     const editorRole = req.auth.role;
