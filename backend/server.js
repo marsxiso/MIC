@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const { Pool } = require('pg');
-const { authenticate, issueToken, verifyPassword, hashPassword } = require('./auth');
+const { authenticate, issueToken, verifyPassword, hashPassword, createActivationCode, hashActivationCode, verifyActivationCode, activationExpiry } = require('./auth');
 
 const app = express();
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -130,6 +130,46 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+app.post('/auth/activate', async (req, res) => {
+  const { login, activation_code, password, password_confirm } = req.body || {};
+  if (!login || !activation_code || !password || password !== password_confirm) {
+    return res.status(400).json({ ok: false, message: 'Проверьте логин, код и совпадение паролей' });
+  }
+  if (String(password).length < 12) {
+    return res.status(400).json({ ok: false, message: 'Пароль должен содержать не менее 12 символов' });
+  }
+  try {
+    const userResult = await pool.query(
+      'SELECT id, login, full_name, role, activation_code_hash, activation_expires_at FROM users WHERE login = $1 LIMIT 1',
+      [String(login).trim()]
+    );
+    let identity = userResult.rows[0] ? { ...userResult.rows[0], kind: 'user' } : null;
+    if (!identity) {
+      const workerResult = await pool.query(
+        'SELECT id, login, full_name, activation_code_hash, activation_expires_at FROM workers WHERE login = $1 LIMIT 1',
+        [String(login).trim()]
+      );
+      if (workerResult.rows[0]) identity = { ...workerResult.rows[0], role: 'Рабочий', kind: 'worker' };
+    }
+    if (!identity || !identity.activation_code_hash ||
+        !identity.activation_expires_at || new Date(identity.activation_expires_at) < new Date() ||
+        !(await verifyActivationCode(String(activation_code), identity.activation_code_hash))) {
+      return res.status(400).json({ ok: false, message: 'Код недействителен или срок его действия истёк' });
+    }
+    const passwordHash = await hashPassword(String(password));
+    const table = identity.kind === 'user' ? 'users' : 'workers';
+    await pool.query(
+      `UPDATE ${table} SET password_hash = $1, activation_code_hash = NULL, activation_expires_at = NULL WHERE id = $2`,
+      [passwordHash, identity.id]
+    );
+    const token = issueToken({ id: identity.id, kind: identity.kind, role: identity.role });
+    return res.json({ ok: true, token, user: { id: identity.id, login: identity.login, full_name: identity.full_name, role: identity.role } });
+  } catch (error) {
+    console.error('ACTIVATION ERROR:', error);
+    res.status(500).json({ ok: false, message: 'Не удалось активировать учётную запись' });
+  }
+});
+
 app.post('/auth/login', async (req, res) => {
   try {
     const { login, password } = req.body;
@@ -188,11 +228,11 @@ app.get('/api/users', async (req, res) => {
 
 app.post('/api/users', async (req, res) => {
   try {
-    const { full_name, login, password, role } = req.body;
+    const { full_name, login, role } = req.body;
     if (req.auth.role !== 'Администратор' && req.auth.role !== 'admin') {
       return res.status(403).json({ ok: false, message: 'Только администратор может создавать пользователей' });
     }
-    if (!full_name || !login || !password || !role) {
+    if (!full_name || !login || !role) {
       return res.status(400).json({ ok: false, message: 'Заполните имя, логин, пароль и роль' });
     }
     const allowedRoles = ['Администратор', 'Производственный мастер', 'Контрольный мастер', 'Контролер', 'admin', 'production_master', 'control_master', 'quality_master', 'controller'];
@@ -203,11 +243,12 @@ app.post('/api/users', async (req, res) => {
     if (duplicate.rows.length > 0) {
       return res.status(400).json({ ok: false, message: 'Пользователь с таким логином уже существует' });
     }
+    const activationCode = createActivationCode();
     const result = await pool.query(
-      'INSERT INTO users (full_name, login, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, full_name, login, role',
-      [String(full_name).trim(), String(login).trim(), await hashPassword(String(password).trim()), role]
+      'INSERT INTO users (full_name, login, password_hash, role, activation_code_hash, activation_expires_at) VALUES ($1, $2, NULL, $3, $4, $5) RETURNING id, full_name, login, role',
+      [String(full_name).trim(), String(login).trim(), role, await hashActivationCode(activationCode), activationExpiry()]
     );
-    res.json(result.rows[0]);
+    res.json({ ...result.rows[0], activation_code: activationCode });
   } catch (error) {
     console.error('CREATE USER ERROR:', error);
     res.status(500).json({ ok: false, message: 'Не удалось создать пользователя' });
@@ -275,16 +316,17 @@ app.get('/api/workers', async (req, res) => {
 
 app.post('/api/workers', async (req, res) => {
   try {
-    const { full_name, login, password } = req.body;
+    const { full_name, login } = req.body;
     if (req.auth.role !== 'Администратор' && req.auth.role !== 'admin') return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
-    if (!full_name || !login || !password) {
+    if (!full_name || !login) {
       return res.status(400).json({ ok: false, message: 'full_name обязателен' });
     }
+    const activationCode = createActivationCode();
     const result = await pool.query(
-      'INSERT INTO workers (full_name, login, password_hash) VALUES ($1, $2, $3) RETURNING id, full_name, login',
-      [full_name.trim(), String(login).trim(), await hashPassword(String(password).trim())]
+      'INSERT INTO workers (full_name, login, password_hash, activation_code_hash, activation_expires_at) VALUES ($1, $2, NULL, $3, $4) RETURNING id, full_name, login',
+      [full_name.trim(), String(login).trim(), await hashActivationCode(activationCode), activationExpiry()]
     );
-    res.json(result.rows[0]);
+    res.json({ ...result.rows[0], activation_code: activationCode });
   } catch (error) {
     console.error('CREATE WORKER ERROR:', error);
     res.status(500).json({ ok: false, message: 'Не удалось добавить рабочего' });
