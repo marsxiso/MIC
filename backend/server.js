@@ -188,8 +188,8 @@ app.get('/api/users', async (req, res) => {
 
 app.post('/api/users', async (req, res) => {
   try {
-    const { full_name, login, password, role, editor_role } = req.body;
-    if (editor_role !== 'Администратор') {
+    const { full_name, login, password, role } = req.body;
+    if (req.auth.role !== 'Администратор' && req.auth.role !== 'admin') {
       return res.status(403).json({ ok: false, message: 'Только администратор может создавать пользователей' });
     }
     if (!full_name || !login || !password || !role) {
@@ -204,8 +204,8 @@ app.post('/api/users', async (req, res) => {
       return res.status(400).json({ ok: false, message: 'Пользователь с таким логином уже существует' });
     }
     const result = await pool.query(
-      'INSERT INTO users (full_name, login, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING *',
-      [String(full_name).trim(), String(login).trim(), String(password).trim(), role]
+      'INSERT INTO users (full_name, login, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, full_name, login, role',
+      [String(full_name).trim(), String(login).trim(), await hashPassword(String(password).trim()), role]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -217,8 +217,8 @@ app.post('/api/users', async (req, res) => {
 app.put('/api/users/:id', async (req, res) => {
   try {
     const userId = toInt(req.params.id);
-    const { full_name, login, password, role, editor_role } = req.body;
-    if (editor_role !== 'Администратор') {
+    const { full_name, login, password, role } = req.body;
+    if (req.auth.role !== 'Администратор' && req.auth.role !== 'admin') {
       return res.status(403).json({ ok: false, message: 'Только администратор может редактировать пользователей' });
     }
     if (!full_name || !login || !role) {
@@ -228,13 +228,13 @@ app.put('/api/users/:id', async (req, res) => {
     let query = `UPDATE users SET full_name = $1, login = $2, role = $3`;
     if (password && String(password).trim()) {
       query += `, password_hash = $5`;
-      fields.push(String(password).trim());
-      query += ` WHERE id = $4 RETURNING *`;
+      fields.push(await hashPassword(String(password).trim()));
+      query += ` WHERE id = $4 RETURNING id, full_name, login, role`;
       const reordered = [fields[0], fields[1], fields[2], fields[3], fields[4]];
       const result = await pool.query(query, reordered);
       return res.json(result.rows[0]);
     }
-    query += ` WHERE id = $4 RETURNING *`;
+    query += ` WHERE id = $4 RETURNING id, full_name, login, role`;
     const result = await pool.query(query, fields);
     res.json(result.rows[0]);
   } catch (error) {
@@ -246,8 +246,7 @@ app.put('/api/users/:id', async (req, res) => {
 app.delete('/api/users/:id', async (req, res) => {
   try {
     const userId = toInt(req.params.id);
-    const { editor_role } = req.body;
-    if (editor_role !== 'Администратор') {
+    if (req.auth.role !== 'Администратор' && req.auth.role !== 'admin') {
       return res.status(403).json({ ok: false, message: 'Только администратор может удалять пользователей' });
     }
     const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
@@ -277,12 +276,13 @@ app.get('/api/workers', async (req, res) => {
 app.post('/api/workers', async (req, res) => {
   try {
     const { full_name, login, password } = req.body;
-    if (!full_name) {
+    if (req.auth.role !== 'Администратор' && req.auth.role !== 'admin') return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
+    if (!full_name || !login || !password) {
       return res.status(400).json({ ok: false, message: 'full_name обязателен' });
     }
     const result = await pool.query(
       'INSERT INTO workers (full_name, login, password_hash) VALUES ($1, $2, $3) RETURNING id, full_name, login',
-      [full_name.trim(), login ? String(login).trim() : null, password ? String(password).trim() : null]
+      [full_name.trim(), String(login).trim(), await hashPassword(String(password).trim())]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -295,8 +295,8 @@ app.post('/api/workers', async (req, res) => {
 app.put('/api/workers/:id', async (req, res) => {
   try {
     const workerId = toInt(req.params.id);
-    const { full_name, login, password, editor_role } = req.body;
-    if (editor_role !== 'Администратор') {
+    const { full_name, login, password } = req.body;
+    if (req.auth.role !== 'Администратор' && req.auth.role !== 'admin') {
       return res.status(403).json({ ok: false, message: 'Только администратор может редактировать рабочих' });
     }
     if (!full_name) {
@@ -304,7 +304,7 @@ app.put('/api/workers/:id', async (req, res) => {
     }
     let result;
     if (password && String(password).trim()) {
-      result = await pool.query('UPDATE workers SET full_name = $1, login = $2, password_hash = $3 WHERE id = $4 RETURNING id, full_name, login', [full_name.trim(), login ? String(login).trim() : null, String(password).trim(), workerId]);
+      result = await pool.query('UPDATE workers SET full_name = $1, login = $2, password_hash = $3 WHERE id = $4 RETURNING id, full_name, login', [full_name.trim(), login ? String(login).trim() : null, await hashPassword(String(password).trim()), workerId]);
     } else {
       result = await pool.query('UPDATE workers SET full_name = $1, login = $2 WHERE id = $3 RETURNING id, full_name, login', [full_name.trim(), login ? String(login).trim() : null, workerId]);
     }
@@ -319,8 +319,7 @@ app.put('/api/workers/:id', async (req, res) => {
 app.delete('/api/workers/:id', async (req, res) => {
   try {
     const workerId = toInt(req.params.id);
-    const { editor_role } = req.body;
-    if (editor_role !== 'Администратор') {
+    if (req.auth.role !== 'Администратор' && req.auth.role !== 'admin') {
       return res.status(403).json({ ok: false, message: 'Только администратор может удалять рабочих' });
     }
     await pool.query('DELETE FROM workers WHERE id = $1', [workerId]);
