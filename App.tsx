@@ -1526,14 +1526,14 @@ export default function App() {
 
   const addWorker = async () => {
     const name = newWorkerName.trim();
-    if (!name) {
-      Alert.alert('Ошибка', 'Введите имя рабочего');
+    if (!name || !workerFormLogin.trim()) {
+      Alert.alert('Ошибка', 'Введите имя и логин рабочего');
       return;
     }
     const response = await apiFetch(`${API_URL}/api/workers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ full_name: name, login: workerFormLogin.trim() || null, password: workerFormPassword.trim() || null }),
+      body: JSON.stringify({ full_name: name, login: workerFormLogin.trim() }),
     });
     const data = await readJson(response);
     if (!response.ok) {
@@ -2751,8 +2751,7 @@ export default function App() {
                   <TextInput style={styles.input} value={editingWorkerId ? workerFormName : newWorkerName} onChangeText={editingWorkerId ? setWorkerFormName : setNewWorkerName} />
                   <Label text="Логин рабочего" />
                   <TextInput style={styles.input} value={workerFormLogin} onChangeText={setWorkerFormLogin} />
-                  <Label text="Пароль рабочего" />
-                  <TextInput style={styles.input} value={workerFormPassword} onChangeText={setWorkerFormPassword} secureTextEntry placeholder="Оставьте пустым, чтобы не менять" placeholderTextColor={COLORS.muted} />
+                  {editingWorkerId ? <><Label text="Новый пароль" /><TextInput style={styles.input} value={workerFormPassword} onChangeText={setWorkerFormPassword} secureTextEntry placeholder="Оставьте пустым, чтобы не менять" placeholderTextColor={COLORS.muted} /></> : <Text style={styles.text}>После создания сотрудник задаст пароль по одноразовому коду.</Text>}
                   <Pressable style={styles.primaryButton} onPress={editingWorkerId ? saveWorker : () => addWorker()}>
                     <Text style={styles.primaryButtonText}>{editingWorkerId ? 'Сохранить рабочего' : 'Добавить рабочего'}</Text>
                   </Pressable>
