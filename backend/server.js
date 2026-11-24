@@ -43,6 +43,7 @@ async function runSchema() {
 
 function isAdmin(req) { return ['Администратор', 'admin'].includes(req.auth?.role); }
 function isControlRole(req) { return ['Контролер', 'Контрольный мастер', 'controller', 'control_master', 'quality_master', 'admin', 'Администратор'].includes(req.auth?.role); }
+function isControlMasterRole(req) { return ['Контрольный мастер', 'control_master', 'quality_master', 'admin', 'Администратор'].includes(req.auth?.role); }
 function isProductionRole(req) { return ['Производственный мастер', 'production_master', 'admin', 'Администратор'].includes(req.auth?.role); }
 function isUserIdentity(req) { return req.auth?.kind === 'user'; }
 function isWorkerIdentity(req) { return req.auth?.kind === 'worker'; }
@@ -193,10 +194,11 @@ app.post('/auth/activate', async (req, res) => {
     await clearAuthFailures(login, ip);
     const passwordHash = await hashPassword(String(password));
     const table = identity.kind === 'user' ? 'users' : 'workers';
-    await pool.query(
-      `UPDATE ${table} SET password_hash = $1, activation_code_hash = NULL, activation_expires_at = NULL WHERE id = $2`,
-      [passwordHash, identity.id]
+    const consumed = await pool.query(
+      `UPDATE ${table} SET password_hash = $1, activation_code_hash = NULL, activation_expires_at = NULL WHERE id = $2 AND activation_code_hash = $3 AND activation_expires_at > NOW() RETURNING id`,
+      [passwordHash, identity.id, identity.activation_code_hash]
     );
+    if (!consumed.rowCount) return res.status(400).json({ ok: false, message: 'Код уже использован или срок его действия истёк' });
     const token = issueToken({ id: identity.id, kind: identity.kind, role: identity.role });
     return res.json({ ok: true, token, user: { id: identity.id, login: identity.login, full_name: identity.full_name, role: identity.role } });
   } catch (error) {
@@ -307,7 +309,7 @@ app.put('/api/users/:id', async (req, res) => {
     const fields = [full_name.trim(), login.trim(), role, userId];
     let query = `UPDATE users SET full_name = $1, login = $2, role = $3`;
     if (password && String(password).trim()) {
-      query += `, password_hash = $5`;
+      query += `, password_hash = $5, activation_code_hash = NULL, activation_expires_at = NULL`;
       fields.push(await hashPassword(String(password).trim()));
       query += ` WHERE id = $4 RETURNING id, full_name, login, role`;
       const reordered = [fields[0], fields[1], fields[2], fields[3], fields[4]];
@@ -387,7 +389,7 @@ app.put('/api/workers/:id', async (req, res) => {
     }
     let result;
     if (password && String(password).trim()) {
-      result = await pool.query('UPDATE workers SET full_name = $1, login = $2, password_hash = $3 WHERE id = $4 RETURNING id, full_name, login', [full_name.trim(), login ? String(login).trim() : null, await hashPassword(String(password).trim()), workerId]);
+      result = await pool.query('UPDATE workers SET full_name = $1, login = $2, password_hash = $3, activation_code_hash = NULL, activation_expires_at = NULL WHERE id = $4 RETURNING id, full_name, login', [full_name.trim(), login ? String(login).trim() : null, await hashPassword(String(password).trim()), workerId]);
     } else {
       result = await pool.query('UPDATE workers SET full_name = $1, login = $2 WHERE id = $3 RETURNING id, full_name, login', [full_name.trim(), login ? String(login).trim() : null, workerId]);
     }
@@ -782,7 +784,7 @@ app.put('/api/shifts/:id', async (req, res) => {
 
     const admin = isAdmin(req);
     const isProductionMasterEditingWorker = isProductionRole(req) && nextEmployeeType === 'worker';
-    const isControlMasterEditingController = isControlRole(req) && nextEmployeeType === 'controller';
+    const isControlMasterEditingController = isControlMasterRole(req) && nextEmployeeType === 'controller';
     const isOwner = String(shift.assigned_by || '') === String(editorId || '');
     if (!admin && !isProductionMasterEditingWorker && !isControlMasterEditingController && !isOwner) {
       return res.status(403).json({ ok: false, message: 'Нет прав на редактирование этой смены' });
@@ -834,7 +836,7 @@ app.delete('/api/shifts/:id', async (req, res) => {
     const admin = isAdmin(req);
     const shiftEmployeeType = shift.employee_type || (shift.user_id ? 'controller' : 'worker');
     const isProductionMasterDeletingWorker = isProductionRole(req) && shiftEmployeeType === 'worker';
-    const isControlMasterDeletingController = isControlRole(req) && shiftEmployeeType === 'controller';
+    const isControlMasterDeletingController = isControlMasterRole(req) && shiftEmployeeType === 'controller';
     if (!admin && !isProductionMasterDeletingWorker && !isControlMasterDeletingController && String(shift.assigned_by || '') !== String(editorId || '')) {
       return res.status(403).json({ ok: false, message: 'Нет прав на удаление этой смены' });
     }
