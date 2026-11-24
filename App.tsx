@@ -536,6 +536,10 @@ export default function App() {
 
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
+  const [activationMode, setActivationMode] = useState(false);
+  const [activationCode, setActivationCode] = useState('');
+  const [activationPassword, setActivationPassword] = useState('');
+  const [activationPasswordConfirm, setActivationPasswordConfirm] = useState('');
   const [token, setToken] = useState('');
   const tokenRef = useRef('');
 
@@ -555,6 +559,7 @@ export default function App() {
   const [isControlEditMode, setIsControlEditMode] = useState(false);
   const [adminScheduleType, setAdminScheduleType] = useState<ShiftEmployeeType>('worker');
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [creatingUser, setCreatingUser] = useState(false);
   const [userForm, setUserForm] = useState({ name: '', login: '', password: '', role: 'Контролер' as Role });
   const [editingWorkerId, setEditingWorkerId] = useState<string | null>(null);
   const [workerFormName, setWorkerFormName] = useState('');
@@ -1015,6 +1020,45 @@ export default function App() {
       };
       setCurrentUser(nextUser);
       await AsyncStorage.setItem('lizun_current_user', JSON.stringify(nextUser));
+      setScreen('dashboard');
+      await syncAllFromServer();
+    } catch {
+      Alert.alert('Ошибка', `Не удалось подключиться к серверу ${API_URL}`);
+    }
+  };
+
+  const handleActivateAccount = async () => {
+    try {
+      const response = await fetch(`${API_URL}/auth/activate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          login: login.trim(),
+          activation_code: activationCode.trim(),
+          password: activationPassword,
+          password_confirm: activationPasswordConfirm,
+        }),
+      });
+      const data = (await readJson(response)) as LoginResponse;
+      if (!response.ok || !data.user || !data.token) {
+        Alert.alert('Ошибка', data?.message || 'Не удалось активировать учётную запись');
+        return;
+      }
+      tokenRef.current = data.token;
+      setToken(data.token);
+      await AsyncStorage.setItem('mic_auth_token', data.token);
+      const nextUser = {
+        id: String(data.user.id),
+        login: data.user.login || login.trim(),
+        name: data.user.full_name,
+        role: mapApiRoleToAppRole(data.user.role),
+      };
+      setCurrentUser(nextUser);
+      await AsyncStorage.setItem('lizun_current_user', JSON.stringify(nextUser));
+      setActivationMode(false);
+      setActivationCode('');
+      setActivationPassword('');
+      setActivationPasswordConfirm('');
       setScreen('dashboard');
       await syncAllFromServer();
     } catch {
@@ -1500,7 +1544,7 @@ export default function App() {
     setNewWorkerName('');
     setWorkerFormLogin('');
     setWorkerFormPassword('');
-    Alert.alert('Готово', 'Рабочий добавлен');
+    Alert.alert('Рабочий добавлен', `Логин: ${data.login}\nОдноразовый код: ${data.activation_code || 'не получен'}\nПередайте код сотруднику. Он действует 15 минут.`);
   };
 
 
@@ -1949,12 +1993,32 @@ export default function App() {
               <Text style={styles.loginCompanyName}>Инновационный центр металлообработки</Text>
             </View>
             <View style={styles.card}>
+              <Text style={styles.cardTitle}>{activationMode ? 'Первичная активация' : 'Вход в систему'}</Text>
               <Label text="Логин" />
-              <TextInput style={styles.input} value={login} onChangeText={setLogin} />
-              <Label text="Пароль" />
-              <TextInput style={styles.input} secureTextEntry value={password} onChangeText={setPassword} />
-              <Pressable style={styles.primaryButton} onPress={handleLogin}>
-                <Text style={styles.primaryButtonText}>Войти</Text>
+              <TextInput style={styles.input} value={login} onChangeText={setLogin} autoCapitalize="none" />
+              {activationMode ? (
+                <>
+                  <Label text="Одноразовый код от администратора" />
+                  <TextInput style={styles.input} value={activationCode} onChangeText={setActivationCode} keyboardType="number-pad" />
+                  <Label text="Придумайте пароль (не менее 12 символов)" />
+                  <TextInput style={styles.input} secureTextEntry value={activationPassword} onChangeText={setActivationPassword} />
+                  <Label text="Повторите пароль" />
+                  <TextInput style={styles.input} secureTextEntry value={activationPasswordConfirm} onChangeText={setActivationPasswordConfirm} />
+                  <Pressable style={styles.primaryButton} onPress={handleActivateAccount}>
+                    <Text style={styles.primaryButtonText}>Активировать учётную запись</Text>
+                  </Pressable>
+                </>
+              ) : (
+                <>
+                  <Label text="Пароль" />
+                  <TextInput style={styles.input} secureTextEntry value={password} onChangeText={setPassword} />
+                  <Pressable style={styles.primaryButton} onPress={handleLogin}>
+                    <Text style={styles.primaryButtonText}>Войти</Text>
+                  </Pressable>
+                </>
+              )}
+              <Pressable style={styles.secondaryButton} onPress={() => setActivationMode((value) => !value)}>
+                <Text style={styles.secondaryButtonText}>{activationMode ? 'Вернуться ко входу' : 'Первый вход? Активировать аккаунт'}</Text>
               </Pressable>
             </View>
           </View>
@@ -2609,7 +2673,7 @@ export default function App() {
               <SectionTitle title="Панель администратора" />
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Пользователи</Text>
-                {editingUserId && (
+                {(editingUserId || creatingUser) && (
                   <View style={styles.cardSoft}>
                     <Label text="Имя" />
                     <TextInput style={styles.input} value={userForm.name} onChangeText={(value) => setUserForm((prev) => ({ ...prev, name: value }))} />
@@ -2628,7 +2692,7 @@ export default function App() {
                     <Pressable style={styles.primaryButton} onPress={saveUser}>
                       <Text style={styles.primaryButtonText}>Сохранить пользователя</Text>
                     </Pressable>
-                    <Pressable style={styles.secondaryButton} onPress={() => { setEditingUserId(null); setUserForm({ name: '', login: '', password: '', role: 'Контролер' }); }}>
+                    <Pressable style={styles.secondaryButton} onPress={() => { setEditingUserId(null); setCreatingUser(false); setUserForm({ name: '', login: '', password: '', role: 'Контролер' }); }}>
                       <Text style={styles.secondaryButtonText}>Отмена</Text>
                     </Pressable>
                   </View>
