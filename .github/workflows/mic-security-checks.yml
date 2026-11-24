@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - main
+      - feature/secure-first-login
 
 jobs:
   backend:
@@ -42,9 +43,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - run: npm install expo@~52.0.0
+      - run: npx expo install --fix
       - run: npm install --package-lock-only --ignore-scripts
       - run: npm audit fix --package-lock-only || true
       - run: npm ci
+      - run: npx expo-doctor
       - run: npm audit --json > mobile-npm-audit.json || true
       - run: npx tsc --noEmit --strict --skipLibCheck --allowSyntheticDefaultImports --jsx react-native --target esnext --moduleResolution node App.tsx
       - uses: actions/upload-artifact@v4
@@ -68,6 +72,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - run: npm install expo@~52.0.0
+      - run: npx expo install --fix
       - run: npm install --package-lock-only --ignore-scripts
       - run: npm audit fix --package-lock-only || true
       - run: npm --prefix backend install --package-lock-only --ignore-scripts
@@ -76,7 +82,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json backend/package-lock.json
+          git add package.json package-lock.json backend/package-lock.json
           if git diff --cached --quiet; then
             echo "Lockfiles are already current"
           else
