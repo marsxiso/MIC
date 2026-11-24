@@ -947,8 +947,10 @@ export default function App() {
       await AsyncStorage.setItem('lizun_current_user', JSON.stringify(nextUser));
       setScreen('dashboard');
       await syncAllFromServer();
-    } catch {
-      Alert.alert('Ошибка', `Не удалось подключиться к серверу ${API_URL}`);
+    } catch (error) {
+      const details = error instanceof Error ? error.message : String(error);
+      console.error('MIC LOGIN NETWORK ERROR:', error);
+      Alert.alert('Ошибка входа', `Адрес: ${API_URL}\nПричина: ${details || 'неизвестная ошибка сети'}`);
     }
   };
 
