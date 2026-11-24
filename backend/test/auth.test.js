@@ -26,6 +26,7 @@ test('activation code hashes verify only the original code', async () => {
 
 test('passwords are hashed and enforce the minimum length', async () => {
   await assert.rejects(() => hashPassword('short'), /не менее 12/);
+  await assert.rejects(() => hashPassword('x'.repeat(73)), /слишком длинный/);
   const hash = await hashPassword('a-long-password-123');
   assert.notEqual(hash, 'a-long-password-123');
   assert.equal(await verifyPassword('a-long-password-123', hash), true);
