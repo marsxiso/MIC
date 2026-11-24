@@ -534,6 +534,7 @@ export default function App() {
   const [inspections, setInspections] = useState<Inspection[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [appReady, setAppReady] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
 
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
@@ -929,7 +930,7 @@ export default function App() {
         if (!storedToken || !rawUser) {
           await AsyncStorage.removeItem('lizun_current_user');
           await SecureStore.deleteItemAsync('mic_auth_token');
-          if (mounted) setAppReady(true);
+          if (mounted) { setSessionReady(true); setAppReady(true); }
           return;
         }
         const restoredUser = JSON.parse(rawUser) as User;
@@ -947,13 +948,14 @@ export default function App() {
           setCurrentUser(null);
         }
       } finally {
-        if (mounted) setAppReady(true);
+        if (mounted) { setSessionReady(true); setAppReady(true); }
       }
     })();
     return () => { mounted = false; };
   }, []);
 
   useEffect(() => {
+    if (!sessionReady) return;
     (async () => {
       try {
         if (currentUser) {
@@ -963,7 +965,7 @@ export default function App() {
         }
       } catch {}
     })();
-  }, [currentUser]);
+  }, [currentUser, sessionReady]);
 
   useEffect(() => {
     if (!selectedBatchId) return;
