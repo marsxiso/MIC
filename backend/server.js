@@ -150,7 +150,7 @@ async function recordAuthFailure(login, ip) {
      VALUES ($1, $2, 1, NULL, NOW())
      ON CONFLICT (login_key, ip_key) DO UPDATE SET
        failed_count = CASE WHEN auth_attempts.locked_until IS NOT NULL AND auth_attempts.locked_until <= NOW() THEN 1 ELSE auth_attempts.failed_count + 1 END,
-       locked_until = CASE WHEN auth_attempts.failed_count >= 4 THEN NOW() + INTERVAL '15 minutes' ELSE NULL END,
+       locked_until = CASE WHEN auth_attempts.locked_until IS NOT NULL AND auth_attempts.locked_until <= NOW() THEN NULL WHEN auth_attempts.failed_count >= 4 THEN NOW() + INTERVAL '15 minutes' ELSE NULL END,
        updated_at = NOW()`,
     [String(login).trim().toLowerCase(), String(ip || 'unknown')]
   );
