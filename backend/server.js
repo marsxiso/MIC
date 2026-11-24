@@ -5,7 +5,6 @@ const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
 const { Pool } = require('pg');
 const { authenticate, issueToken, verifyPassword, hashPassword, createActivationCode, hashActivationCode, verifyActivationCode, activationExpiry, getJwtSecret } = require('./auth');
 
@@ -203,6 +202,90 @@ async function clearAuthFailures(login, ip) {
     pool.query('DELETE FROM auth_attempts WHERE login_key = $1 AND ip_key = $2', [loginKey, ipKey]),
   ]);
 }
+
+// One-time initial administrator bootstrap. Configure MIC_BOOTSTRAP_SECRET only for setup,
+// call this endpoint once, then remove the secret from the Render environment.
+app.post('/auth/bootstrap-admin', async (req, res) => {
+  const configuredSecret = process.env.MIC_BOOTSTRAP_SECRET || '';
+  const suppliedSecret = req.get('x-mic-bootstrap-secret') || '';
+  if (Buffer.byteLength(configuredSecret, 'utf8') < 32 ||
+      Buffer.byteLength(suppliedSecret, 'utf8') !== Buffer.byteLength(configuredSecret, 'utf8') ||
+      !require('crypto').timingSafeEqual(Buffer.from(suppliedSecret), Buffer.from(configuredSecret))) {
+    return res.status(404).json({ ok: false, message: 'Not found' });
+  }
+
+  const { login, full_name, password } = req.body || {};
+  if (!login || !full_name || typeof password !== 'string' || password.length < 12 || Buffer.byteLength(password, 'utf8') > 72) {
+    return res.status(400).json({ ok: false, message: 'Укажите имя, логин и пароль длиной от 12 до 72 байт' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(734921, 1)');
+    const existing = await client.query('SELECT id FROM users LIMIT 1');
+    if (existing.rowCount > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, message: 'Администратор или пользователь уже существует' });
+    }
+    const normalizedLogin = String(login).trim();
+    const normalizedName = String(full_name).trim();
+    if (!normalizedLogin || !normalizedName) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ ok: false, message: 'Имя и логин не могут быть пустыми' });
+    }
+    const duplicate = await client.query('SELECT id FROM workers WHERE login = $1 LIMIT 1', [normalizedLogin]);
+    if (duplicate.rowCount > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, message: 'Этот логин уже занят' });
+    }
+    const passwordHash = await hashPassword(password);
+    const created = await client.query(
+      "INSERT INTO users (full_name, login, password_hash, role) VALUES ($1, $2, $3, 'Администратор') RETURNING id, full_name, login, role",
+      [normalizedName, normalizedLogin, passwordHash]
+    );
+    await client.query('COMMIT');
+    return res.status(201).json({ ok: true, user: created.rows[0], message: 'Первый администратор создан. Удалите MIC_BOOTSTRAP_SECRET из Render Environment.' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('BOOTSTRAP ADMIN ERROR:', error);
+    return res.status(500).json({ ok: false, message: 'Не удалось создать администратора' });
+  } finally {
+    client.release();
+  }
+});
+
+// Temporary, secret-guarded recovery for an existing administrator who lost the activation code.
+// Remove MIC_BOOTSTRAP_SECRET from Render immediately after using this endpoint.
+app.post('/auth/recover-admin-code', async (req, res) => {
+  const configuredSecret = process.env.MIC_BOOTSTRAP_SECRET || '';
+  const suppliedSecret = req.get('x-mic-bootstrap-secret') || '';
+  if (Buffer.byteLength(configuredSecret, 'utf8') < 32 ||
+      Buffer.byteLength(suppliedSecret, 'utf8') !== Buffer.byteLength(configuredSecret, 'utf8') ||
+      !require('crypto').timingSafeEqual(Buffer.from(suppliedSecret), Buffer.from(configuredSecret))) {
+    return res.status(404).json({ ok: false, message: 'Not found' });
+  }
+  try {
+    const login = String((req.body || {}).login || '').trim();
+    if (!login) return res.status(400).json({ ok: false, message: 'Укажите логин администратора' });
+    const result = await pool.query(
+      "SELECT id, login FROM users WHERE login = $1 AND role IN ('Администратор', 'admin') LIMIT 1",
+      [login]
+    );
+    if (!result.rowCount) return res.status(404).json({ ok: false, message: 'Администратор не найден' });
+    const code = createActivationCode();
+    const codeHash = await hashActivationCode(code);
+    const expiresAt = activationExpiry();
+    await pool.query(
+      'UPDATE users SET password_hash = NULL, activation_code_hash = $1, activation_expires_at = $2 WHERE id = $3',
+      [codeHash, expiresAt, result.rows[0].id]
+    );
+    return res.json({ ok: true, login: result.rows[0].login, activation_code: code, message: 'Выдан новый одноразовый код. Удалите MIC_BOOTSTRAP_SECRET из Render Environment.' });
+  } catch (error) {
+    console.error('ADMIN RECOVERY ERROR:', error);
+    return res.status(500).json({ ok: false, message: 'Не удалось выдать код восстановления' });
+  }
+});
 
 app.post('/auth/activate', async (req, res) => {
   const { login, activation_code, password, password_confirm } = req.body || {};
@@ -1122,29 +1205,6 @@ app.post('/api/upload-image', authenticateCurrentAccount, upload.single('file'),
   }
 });
 
-app.post('/analyze-defect', authenticateCurrentAccount, upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ ok: false, message: 'Файл не загружен' });
-    }
-
-    const image = fs.readFileSync(req.file.path, { encoding: 'base64' });
-    const response = await axios({
-      method: 'POST',
-      url: process.env.ROBOFLOW_MODEL_URL,
-      params: { api_key: process.env.ROBOFLOW_API_KEY },
-      data: image,
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    });
-
-    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-    res.json(response.data);
-  } catch (error) {
-    console.error('AI ERROR:', error?.response?.data || error.message);
-    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-    res.status(500).json({ ok: false, message: 'Ошибка анализа изображения' });
-  }
-});
 
 const PORT = process.env.PORT || 8000;
 

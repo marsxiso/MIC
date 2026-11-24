@@ -8,7 +8,6 @@ Before starting this version, configure these variables in the staging service:
 
 - `DATABASE_URL`: the staging PostgreSQL connection string.
 - `JWT_SECRET`: a randomly generated secret with at least 32 bytes. Keep it private.
-- Existing AI variables used by the application, if defect analysis is required.
 
 Never commit these values or send them in chat.
 

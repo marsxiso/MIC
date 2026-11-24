@@ -8,6 +8,8 @@ on:
     branches:
       - main
       - feature/secure-first-login
+      - feature/expo-sdk52-clean
+      - feature/remove-ai-manual-defects
 
 jobs:
   backend:
