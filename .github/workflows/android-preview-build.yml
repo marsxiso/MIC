@@ -34,3 +34,5 @@ jobs:
 
 # Lockfile refresh trigger after adding expo-asset.
 # CI now runs expo install --fix before validating SDK dependencies.
+
+# Trigger CI to refresh Expo SDK 52 lockfile on this branch.
