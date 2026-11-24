@@ -5,7 +5,6 @@ const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
 const { Pool } = require('pg');
 const { authenticate, issueToken, verifyPassword, hashPassword, createActivationCode, hashActivationCode, verifyActivationCode, activationExpiry, getJwtSecret } = require('./auth');
 
@@ -1122,29 +1121,6 @@ app.post('/api/upload-image', authenticateCurrentAccount, upload.single('file'),
   }
 });
 
-app.post('/analyze-defect', authenticateCurrentAccount, upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ ok: false, message: 'Файл не загружен' });
-    }
-
-    const image = fs.readFileSync(req.file.path, { encoding: 'base64' });
-    const response = await axios({
-      method: 'POST',
-      url: process.env.ROBOFLOW_MODEL_URL,
-      params: { api_key: process.env.ROBOFLOW_API_KEY },
-      data: image,
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    });
-
-    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-    res.json(response.data);
-  } catch (error) {
-    console.error('AI ERROR:', error?.response?.data || error.message);
-    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-    res.status(500).json({ ok: false, message: 'Ошибка анализа изображения' });
-  }
-});
 
 const PORT = process.env.PORT || 8000;
 
