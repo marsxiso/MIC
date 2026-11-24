@@ -31,7 +31,7 @@ The script refuses to run if a user already exists. It hashes the password and d
 4. The code expires after 15 minutes and can be used only once.
 5. The employee then signs in with the new password.
 
-The API stores only bcrypt hashes for passwords and activation codes. Login and activation attempts are throttled per login and client IP in PostgreSQL.
+The API stores only bcrypt hashes for passwords and activation codes. Login and activation attempts are throttled per account and client IP in PostgreSQL. Activation codes are single-use; access tokens expire after two hours and each protected request verifies that the account still exists and its role has not changed.
 
 ## Before production rollout
 
