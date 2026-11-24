@@ -1,9 +1,6 @@
 name: MIC security branch checks
 
 on:
-  push:
-    branches:
-      - feature/secure-first-login
   pull_request:
     branches:
       - main
