@@ -360,7 +360,7 @@ async function uploadDefectImageToApi(imageUri: string): Promise<string> {
     } as any,
   );
 
-  const response = await fetch(`${API_URL}/api/upload-image`, {
+  const response = await apiFetch(`${API_URL}/api/upload-image`, {
     method: 'POST',
     body: formData,
   });
@@ -829,11 +829,11 @@ export default function App() {
 
   const syncAllFromServer = async () => {
     const [usersRes, workersRes, batchesRes, shiftsRes, inspectionsRes] = await Promise.all([
-      fetch(`${API_URL}/api/users`),
-      fetch(`${API_URL}/api/workers`),
-      fetch(`${API_URL}/api/batches`),
-      fetch(`${API_URL}/api/shifts`),
-      fetch(`${API_URL}/api/inspections`),
+      apiFetch(`${API_URL}/api/users`),
+      apiFetch(`${API_URL}/api/workers`),
+      apiFetch(`${API_URL}/api/batches`),
+      apiFetch(`${API_URL}/api/shifts`),
+      apiFetch(`${API_URL}/api/inspections`),
     ]);
 
     const [usersData, workersData, batchesData, shiftsData, inspectionsData] = await Promise.all([
@@ -1066,7 +1066,7 @@ export default function App() {
 
     try {
       if (editingBatchId) {
-        const response = await fetch(`${API_URL}/api/batches/${editingBatchId}`, {
+        const response = await apiFetch(`${API_URL}/api/batches/${editingBatchId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1089,7 +1089,7 @@ export default function App() {
         return;
       }
 
-      const response = await fetch(`${API_URL}/api/batches`, {
+      const response = await apiFetch(`${API_URL}/api/batches`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1137,7 +1137,7 @@ export default function App() {
         style: 'destructive',
         onPress: async () => {
           try {
-            const response = await fetch(`${API_URL}/api/batches/${batch.id}`, {
+            const response = await apiFetch(`${API_URL}/api/batches/${batch.id}`, {
               method: 'DELETE',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ editor_id: Number(currentUser.id), editor_role: currentUser.role }),
@@ -1160,7 +1160,7 @@ export default function App() {
   const markBatchReadyToSend = async (batch: Batch) => {
     if (!currentUser) return;
     try {
-      const response = await fetch(`${API_URL}/api/batches/${batch.id}/mark-ready-to-send`, {
+      const response = await apiFetch(`${API_URL}/api/batches/${batch.id}/mark-ready-to-send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ editor_id: Number(currentUser.id), editor_role: currentUser.role }),
@@ -1180,7 +1180,7 @@ export default function App() {
   const sendBatchToAssembly = async (batch: Batch) => {
     if (!currentUser) return;
     try {
-      const response = await fetch(`${API_URL}/api/batches/${batch.id}/send-to-assembly`, {
+      const response = await apiFetch(`${API_URL}/api/batches/${batch.id}/send-to-assembly`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ editor_id: Number(currentUser.id), editor_role: currentUser.role }),
@@ -1334,7 +1334,7 @@ export default function App() {
     try {
       const url = selectedInspection ? `${API_URL}/api/inspections/${selectedInspection.id}` : `${API_URL}/api/inspections`;
       const method = selectedInspection ? 'PUT' : 'POST';
-      const response = await fetch(url, {
+      const response = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1357,7 +1357,7 @@ export default function App() {
   const acceptBatchForWork = async (batch: Batch) => {
     if (!currentUser) return;
     try {
-      const response = await fetch(`${API_URL}/api/batches/${batch.id}/worker-accept`, {
+      const response = await apiFetch(`${API_URL}/api/batches/${batch.id}/worker-accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ worker_id: Number(currentUser.id) }),
@@ -1377,7 +1377,7 @@ export default function App() {
   const completeBatchWork = async (batch: Batch) => {
     if (!currentUser) return;
     try {
-      const response = await fetch(`${API_URL}/api/batches/${batch.id}/worker-complete`, {
+      const response = await apiFetch(`${API_URL}/api/batches/${batch.id}/worker-complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ worker_id: Number(currentUser.id) }),
@@ -1401,7 +1401,7 @@ export default function App() {
       return;
     }
     try {
-      const response = await fetch(`${API_URL}/api/batches/${batch.id}/accept`, {
+      const response = await apiFetch(`${API_URL}/api/batches/${batch.id}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: Number(currentUser.id) }),
@@ -1428,7 +1428,7 @@ export default function App() {
   const cancelAcceptedBatch = async (batch: Batch) => {
     if (!currentUser) return;
     try {
-      const response = await fetch(`${API_URL}/api/batches/${batch.id}/cancel-accept`, {
+      const response = await apiFetch(`${API_URL}/api/batches/${batch.id}/cancel-accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: Number(currentUser.id) }),
@@ -1457,7 +1457,7 @@ export default function App() {
     );
 
     try {
-      const response = await fetch(`${API_URL}/api/inspection-defects/${defectId}/status`, {
+      const response = await apiFetch(`${API_URL}/api/inspection-defects/${defectId}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ review_status: status }),
@@ -1481,7 +1481,7 @@ export default function App() {
       Alert.alert('Ошибка', 'Введите имя рабочего');
       return;
     }
-    const response = await fetch(`${API_URL}/api/workers`, {
+    const response = await apiFetch(`${API_URL}/api/workers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ full_name: name, login: workerFormLogin.trim() || null, password: workerFormPassword.trim() || null }),
@@ -1508,7 +1508,7 @@ export default function App() {
   const saveUser = async () => {
     if (!currentUser || !editingUserId) return;
     try {
-      const response = await fetch(`${API_URL}/api/users/${editingUserId}`, {
+      const response = await apiFetch(`${API_URL}/api/users/${editingUserId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1542,7 +1542,7 @@ export default function App() {
         style: 'destructive',
         onPress: async () => {
           try {
-            const response = await fetch(`${API_URL}/api/users/${user.id}`, {
+            const response = await apiFetch(`${API_URL}/api/users/${user.id}`, {
               method: 'DELETE',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ editor_role: currentUser.role }),
@@ -1572,7 +1572,7 @@ export default function App() {
   const saveWorker = async () => {
     if (!currentUser || !editingWorkerId) return;
     try {
-      const response = await fetch(`${API_URL}/api/workers/${editingWorkerId}`, {
+      const response = await apiFetch(`${API_URL}/api/workers/${editingWorkerId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ full_name: workerFormName.trim(), login: workerFormLogin.trim() || null, password: workerFormPassword.trim() || null, editor_role: currentUser.role }),
@@ -1602,7 +1602,7 @@ export default function App() {
         style: 'destructive',
         onPress: async () => {
           try {
-            const response = await fetch(`${API_URL}/api/workers/${worker.id}`, {
+            const response = await apiFetch(`${API_URL}/api/workers/${worker.id}`, {
               method: 'DELETE',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ editor_role: currentUser.role }),
@@ -1644,7 +1644,7 @@ export default function App() {
 
     try {
       if (editingShiftId) {
-        const response = await fetch(`${API_URL}/api/shifts/${editingShiftId}`, {
+        const response = await apiFetch(`${API_URL}/api/shifts/${editingShiftId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ shift_date: shiftDate, editor_id: Number(currentUser.id) }),
@@ -1666,7 +1666,7 @@ export default function App() {
         ? { worker_id: Number((selectedEmployee as Worker).id), shift_date: shiftDate, shift_type: workerShiftType, assigned_by: Number(currentUser.id), employee_type: 'worker' }
         : { user_id: Number((selectedEmployee as User).id), shift_date: shiftDate, shift_type: 'day', assigned_by: Number(currentUser.id), employee_type: 'controller' };
 
-      const response = await fetch(`${API_URL}/api/shifts`, {
+      const response = await apiFetch(`${API_URL}/api/shifts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -1701,7 +1701,7 @@ export default function App() {
         style: 'destructive',
         onPress: async () => {
           try {
-            const response = await fetch(`${API_URL}/api/shifts/${shift.id}`, {
+            const response = await apiFetch(`${API_URL}/api/shifts/${shift.id}`, {
               method: 'DELETE',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ editor_id: Number(currentUser.id), editor_role: currentUser.role }),
