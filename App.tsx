@@ -1600,6 +1600,7 @@ export default function App() {
   };
 
   const startEditUser = (user: User) => {
+    setCreatingUser(false);
     setEditingUserId(user.id);
     setUserForm({ name: user.name, login: user.login, password: '', role: user.role });
     setScreen('admin');
