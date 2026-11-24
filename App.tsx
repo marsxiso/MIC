@@ -1546,6 +1546,20 @@ export default function App() {
   };
 
 
+  const reissueActivationCode = async (kind: 'users' | 'workers', id: string) => {
+    try {
+      const response = await apiFetch(`${API_URL}/api/${kind}/${id}/activation-code`, { method: 'POST' });
+      const data = await readJson(response);
+      if (!response.ok) {
+        Alert.alert('Ошибка', data?.message || 'Не удалось выдать код');
+        return;
+      }
+      Alert.alert('Новый код активации', `Логин: ${data.login}\nОдноразовый код: ${data.activation_code}\nСрок действия — 15 минут. Старый пароль больше не действует.`);
+    } catch {
+      Alert.alert('Ошибка', 'Не удалось выдать код активации');
+    }
+  };
+
   const createUser = async () => {
     if (!userForm.name.trim() || !userForm.login.trim()) {
       Alert.alert('Ошибка', 'Введите имя и логин');
@@ -2730,6 +2744,7 @@ export default function App() {
                     <Text style={styles.text}>Логин: {u.login}</Text>
                     <Text style={styles.text}>Роль: {u.role}</Text>
                     <View style={styles.actionsWrap}>
+                      <Pressable style={styles.secondaryButton} onPress={() => reissueActivationCode('users', u.id)}><Text style={styles.secondaryButtonText}>Выдать код активации</Text></Pressable>
                       <Pressable style={styles.secondaryButton} onPress={() => startEditUser(u)}>
                         <Text style={styles.secondaryButtonText}>Редактировать</Text>
                       </Pressable>
@@ -2764,6 +2779,7 @@ export default function App() {
                     <Text style={styles.text}>{worker.name}</Text>
                     <Text style={styles.text}>Логин: {worker.login || '—'}</Text>
                     <View style={styles.actionsWrap}>
+                      <Pressable style={styles.secondaryButton} onPress={() => reissueActivationCode('workers', worker.id)}><Text style={styles.secondaryButtonText}>Выдать код активации</Text></Pressable>
                       <Pressable style={styles.secondaryButton} onPress={() => startEditWorker(worker)}>
                         <Text style={styles.secondaryButtonText}>Редактировать</Text>
                       </Pressable>
