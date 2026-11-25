@@ -5,9 +5,9 @@ const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
 const { Pool } = require('pg');
 const { authenticate, issueToken, verifyPassword, hashPassword, createActivationCode, hashActivationCode, verifyActivationCode, activationExpiry, getJwtSecret } = require('./auth');
+const { createMic2AuthRouter, authenticateMic2Employee } = require('./mic2-auth-router');
 
 const app = express();
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -23,6 +23,8 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
 });
+
+app.use('/auth/mic2', createMic2AuthRouter({ pool }));
 
 async function runSchema() {
   const schemaPath = path.join(__dirname, 'schema.sql');
@@ -295,6 +297,26 @@ app.post('/auth/login', async (req, res) => {
 
 // All business API endpoints require a signed-in identity.
 // Health and login routes are intentionally declared before this middleware.
+// MIC 2.0 profile endpoint is registered before legacy /api authentication.
+app.get('/api/mic2/me', authenticateMic2Employee(pool), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, employee_no, full_name, department, job_title,
+              role_code, login, must_change_password, account_status
+         FROM mic2.employees
+        WHERE id = $1`,
+      [req.employee.id]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ ok: false, message: 'Сотрудник не найден' });
+    }
+    res.json({ ok: true, employee: result.rows[0] });
+  } catch (error) {
+    console.error('MIC2 ME ROUTE ERROR:', error);
+    res.status(500).json({ ok: false, message: 'Не удалось получить профиль сотрудника' });
+  }
+});
+
 app.use('/api', authenticateCurrentAccount);
 
 app.get('/api/users', async (req, res) => {
@@ -1122,29 +1144,7 @@ app.post('/api/upload-image', authenticateCurrentAccount, upload.single('file'),
   }
 });
 
-app.post('/analyze-defect', authenticateCurrentAccount, upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ ok: false, message: 'Файл не загружен' });
-    }
-
-    const image = fs.readFileSync(req.file.path, { encoding: 'base64' });
-    const response = await axios({
-      method: 'POST',
-      url: process.env.ROBOFLOW_MODEL_URL,
-      params: { api_key: process.env.ROBOFLOW_API_KEY },
-      data: image,
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    });
-
-    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-    res.json(response.data);
-  } catch (error) {
-    console.error('AI ERROR:', error?.response?.data || error.message);
-    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-    res.status(500).json({ ok: false, message: 'Ошибка анализа изображения' });
-  }
-});
+// AI analysis endpoint removed: MIC 2.0 uses manual defect entry.
 
 const PORT = process.env.PORT || 8000;
 
