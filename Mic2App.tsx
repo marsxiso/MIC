@@ -90,6 +90,16 @@ export default function Mic2App() {
   const [restoring, setRestoring] = useState(true);
   const [error, setError] = useState('');
   const [activeModule, setActiveModule] = useState('home');
+  const [authMode, setAuthMode] = useState<'login' | 'bootstrap' | 'activate'>('login');
+  const [bootstrapSecret, setBootstrapSecret] = useState('');
+  const [bootstrapName, setBootstrapName] = useState('');
+  const [bootstrapLogin, setBootstrapLogin] = useState('');
+  const [bootstrapJobTitle, setBootstrapJobTitle] = useState('Администратор системы');
+  const [activationCode, setActivationCode] = useState('');
+  const [activationPassword, setActivationPassword] = useState('');
+  const [activationConfirm, setActivationConfirm] = useState('');
+  const [issuedCode, setIssuedCode] = useState('');
+  const [issuedLogin, setIssuedLogin] = useState('');
 
   useEffect(() => {
     let mounted = true;
@@ -118,39 +128,59 @@ export default function Mic2App() {
   );
 
   async function signIn() {
-    if (!login.trim() || !password) {
-      setError('Введите логин и пароль');
-      return;
-    }
-    setBusy(true);
-    setError('');
+    if (!login.trim() || !password) { setError('Введите логин и пароль'); return; }
+    setBusy(true); setError('');
     try {
       const response = await fetch(`${API_URL}/auth/mic2/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ login: login.trim(), password }),
       });
       const data = await readResponse(response);
-      if (!response.ok || !data.ok || !data.token || !data.user) {
-        throw new Error(data.message || 'Не удалось войти в систему');
-      }
+      if (!response.ok || !data.ok || !data.token || !data.user) throw new Error(data.message || 'Не удалось войти в систему');
       const nextEmployee: Employee = data.user;
-      if (!(nextEmployee.role in ROLE_LABELS)) {
-        throw new Error('Для вашей учётной записи не настроена роль MIC 2.0');
-      }
-      await Promise.all([
-        SecureStore.setItemAsync(TOKEN_KEY, data.token),
-        SecureStore.setItemAsync(USER_KEY, JSON.stringify(nextEmployee)),
-      ]);
-      setToken(data.token);
-      setEmployee(nextEmployee);
-      setPassword('');
-      setActiveModule('home');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка подключения к серверу');
-    } finally {
-      setBusy(false);
+      if (!(nextEmployee.role in ROLE_LABELS)) throw new Error('Для вашей учётной записи не настроена роль MIC 2.0');
+      await Promise.all([SecureStore.setItemAsync(TOKEN_KEY, data.token), SecureStore.setItemAsync(USER_KEY, JSON.stringify(nextEmployee))]);
+      setToken(data.token); setEmployee(nextEmployee); setPassword(''); setActiveModule('home');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Ошибка подключения к серверу'); }
+    finally { setBusy(false); }
+  }
+
+  async function createFirstAdmin() {
+    if (!bootstrapName.trim() || !bootstrapLogin.trim() || !bootstrapJobTitle.trim() || !bootstrapSecret.trim()) {
+      setError('Заполните все поля первоначальной настройки'); return;
     }
+    setBusy(true); setError('');
+    try {
+      const response = await fetch(`${API_URL}/auth/mic2/bootstrap-admin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-mic-bootstrap-secret': bootstrapSecret },
+        body: JSON.stringify({ full_name: bootstrapName.trim(), login: bootstrapLogin.trim(), job_title: bootstrapJobTitle.trim() }),
+      });
+      const data = await readResponse(response);
+      if (!response.ok || !data.ok || !data.activation_code) throw new Error(data.message || 'Не удалось создать первого администратора');
+      setIssuedLogin(data.employee.login); setIssuedCode(data.activation_code); setActivationCode(data.activation_code);
+      setBootstrapSecret(''); setAuthMode('activate'); setError('');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Ошибка первоначальной настройки'); }
+    finally { setBusy(false); }
+  }
+
+  async function activateFirstAdmin() {
+    if (!issuedLogin || !activationCode || !activationPassword || activationPassword !== activationConfirm) {
+      setError('Проверьте код и убедитесь, что пароли совпадают'); return;
+    }
+    if (activationPassword.length < 12) { setError('Пароль должен содержать не менее 12 символов'); return; }
+    setBusy(true); setError('');
+    try {
+      const response = await fetch(`${API_URL}/auth/mic2/activate`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login: issuedLogin, activation_code: activationCode.trim(), password: activationPassword, password_confirm: activationConfirm }),
+      });
+      const data = await readResponse(response);
+      if (!response.ok || !data.ok) throw new Error(data.message || 'Не удалось активировать учётную запись');
+      setLogin(issuedLogin); setPassword(''); setActivationPassword(''); setActivationConfirm(''); setIssuedCode('');
+      setAuthMode('login'); setError('Учётная запись активирована. Теперь войдите с новым паролем.');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Ошибка активации'); }
+    finally { setBusy(false); }
   }
 
   async function signOut() {
@@ -172,6 +202,7 @@ export default function Mic2App() {
   }
 
   if (!employee) {
+    const setupTitle = authMode === 'bootstrap' ? 'Первоначальная настройка' : authMode === 'activate' ? 'Активация администратора' : 'Вход в систему';
     return (
       <SafeAreaView style={styles.safe}>
         <StatusBar barStyle="light-content" />
@@ -183,38 +214,49 @@ export default function Mic2App() {
           </View>
           <View style={styles.loginCard}>
             <Text style={styles.eyebrow}>ЗАЩИЩЁННЫЙ ДОСТУП</Text>
-            <Text style={styles.loginTitle}>Вход в систему</Text>
-            <Text style={styles.loginHint}>Используйте учётную запись, выданную администратором</Text>
-            <Text style={styles.fieldLabel}>Логин</Text>
-            <TextInput
-              value={login}
-              onChangeText={setLogin}
-              placeholder="Введите логин"
-              placeholderTextColor="#718096"
-              autoCapitalize="none"
-              autoCorrect={false}
-              textContentType="username"
-              style={styles.input}
-              editable={!busy}
-              returnKeyType="next"
-            />
-            <Text style={styles.fieldLabel}>Пароль</Text>
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Введите пароль"
-              placeholderTextColor="#718096"
-              secureTextEntry
-              textContentType="password"
-              style={styles.input}
-              editable={!busy}
-              onSubmitEditing={signIn}
-              returnKeyType="go"
-            />
-            {!!error && <View style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View>}
-            <Pressable onPress={signIn} disabled={busy} style={({ pressed }) => [styles.loginButton, pressed && styles.pressed, busy && styles.disabled]}>
-              {busy ? <ActivityIndicator color="#071A1B" /> : <Text style={styles.loginButtonText}>Войти в MIC 2.0</Text>}
-            </Pressable>
+            <Text style={styles.loginTitle}>{setupTitle}</Text>
+            {authMode === 'login' && <>
+              <Text style={styles.loginHint}>Используйте учётную запись, выданную администратором</Text>
+              <Text style={styles.fieldLabel}>Логин</Text>
+              <TextInput value={login} onChangeText={setLogin} placeholder="Введите логин" placeholderTextColor="#718096" autoCapitalize="none" autoCorrect={false} textContentType="username" style={styles.input} editable={!busy} returnKeyType="next" />
+              <Text style={styles.fieldLabel}>Пароль</Text>
+              <TextInput value={password} onChangeText={setPassword} placeholder="Введите пароль" placeholderTextColor="#718096" secureTextEntry textContentType="password" style={styles.input} editable={!busy} onSubmitEditing={signIn} returnKeyType="go" />
+              {!!error && <View style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View>}
+              <Pressable onPress={signIn} disabled={busy} style={({ pressed }) => [styles.loginButton, pressed && styles.pressed, busy && styles.disabled]}>
+                {busy ? <ActivityIndicator color="#071A1B" /> : <Text style={styles.loginButtonText}>Войти в MIC 2.0</Text>}
+              </Pressable>
+              <Pressable onPress={() => { setError(''); setAuthMode('bootstrap'); }} style={styles.modeButton}><Text style={styles.modeButtonText}>Первоначальная настройка системы</Text></Pressable>
+            </>}
+            {authMode === 'bootstrap' && <>
+              <Text style={styles.loginHint}>Создайте первую учётную запись администратора. Секрет должен быть заранее задан в переменных окружения сервера.</Text>
+              <Text style={styles.fieldLabel}>Секрет первоначальной настройки</Text>
+              <TextInput value={bootstrapSecret} onChangeText={setBootstrapSecret} placeholder="MIC2_BOOTSTRAP_SECRET" placeholderTextColor="#718096" secureTextEntry autoCapitalize="none" style={styles.input} editable={!busy} />
+              <Text style={styles.fieldLabel}>ФИО администратора</Text>
+              <TextInput value={bootstrapName} onChangeText={setBootstrapName} placeholder="Фамилия Имя Отчество" placeholderTextColor="#718096" style={styles.input} editable={!busy} />
+              <Text style={styles.fieldLabel}>Логин</Text>
+              <TextInput value={bootstrapLogin} onChangeText={setBootstrapLogin} placeholder="Например, admin" placeholderTextColor="#718096" autoCapitalize="none" style={styles.input} editable={!busy} />
+              <Text style={styles.fieldLabel}>Должность</Text>
+              <TextInput value={bootstrapJobTitle} onChangeText={setBootstrapJobTitle} placeholder="Должность" placeholderTextColor="#718096" style={styles.input} editable={!busy} />
+              {!!error && <View style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View>}
+              <Pressable onPress={createFirstAdmin} disabled={busy} style={({ pressed }) => [styles.loginButton, pressed && styles.pressed, busy && styles.disabled]}>
+                {busy ? <ActivityIndicator color="#071A1B" /> : <Text style={styles.loginButtonText}>Создать администратора</Text>}
+              </Pressable>
+              <Pressable onPress={() => { setError(''); setAuthMode('login'); }} style={styles.modeButton}><Text style={styles.modeButtonText}>Вернуться ко входу</Text></Pressable>
+            </>}
+            {authMode === 'activate' && <>
+              <Text style={styles.loginHint}>Код действует 15 минут. Задайте пароль длиной не менее 12 символов.</Text>
+              {!!issuedCode && <View style={styles.codePanel}><Text style={styles.codeLabel}>ОДНОРАЗОВЫЙ КОД · СОХРАНИТЕ ЕГО</Text><Text selectable style={styles.codeValue}>{issuedCode}</Text><Text style={styles.codeHint}>Логин: {issuedLogin}</Text></View>}
+              <Text style={styles.fieldLabel}>Код активации</Text>
+              <TextInput value={activationCode} onChangeText={setActivationCode} placeholder="6 цифр" placeholderTextColor="#718096" keyboardType="number-pad" maxLength={6} style={styles.input} editable={!busy} />
+              <Text style={styles.fieldLabel}>Новый пароль</Text>
+              <TextInput value={activationPassword} onChangeText={setActivationPassword} placeholder="Не менее 12 символов" placeholderTextColor="#718096" secureTextEntry style={styles.input} editable={!busy} />
+              <Text style={styles.fieldLabel}>Повторите пароль</Text>
+              <TextInput value={activationConfirm} onChangeText={setActivationConfirm} placeholder="Повторите новый пароль" placeholderTextColor="#718096" secureTextEntry style={styles.input} editable={!busy} />
+              {!!error && <View style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View>}
+              <Pressable onPress={activateFirstAdmin} disabled={busy} style={({ pressed }) => [styles.loginButton, pressed && styles.pressed, busy && styles.disabled]}>
+                {busy ? <ActivityIndicator color="#071A1B" /> : <Text style={styles.loginButtonText}>Активировать учётную запись</Text>}
+              </Pressable>
+            </>}
           </View>
           <Text style={styles.footerNote}>Производственный контур · Контроль качества · Прослеживаемость</Text>
         </KeyboardAvoidingView>
@@ -316,6 +358,12 @@ const styles = StyleSheet.create({
   loginButtonText: { color: '#071A1B', fontSize: 15, fontWeight: '900', letterSpacing: 0.2 },
   pressed: { opacity: 0.82 },
   disabled: { opacity: 0.65 },
+  modeButton: { alignItems: 'center', paddingVertical: 14, marginTop: 4 },
+  modeButtonText: { color: '#67D5C2', fontSize: 12, fontWeight: '700' },
+  codePanel: { backgroundColor: '#10272A', borderColor: '#24504B', borderWidth: 1, borderRadius: 13, padding: 15, marginTop: 12 },
+  codeLabel: { color: '#91B8B0', fontSize: 9, fontWeight: '900', letterSpacing: 1.1 },
+  codeValue: { color: '#C4F4E9', fontSize: 31, fontWeight: '900', letterSpacing: 8, marginTop: 8 },
+  codeHint: { color: '#91B8B0', fontSize: 12, marginTop: 6 },
   footerNote: { color: '#607287', textAlign: 'center', fontSize: 10, lineHeight: 16, marginTop: 24, letterSpacing: 0.5 },
   appShell: { flex: 1, width: '100%', maxWidth: 1120, alignSelf: 'center' },
   topBar: { minHeight: 74, paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: '#1E3042', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
