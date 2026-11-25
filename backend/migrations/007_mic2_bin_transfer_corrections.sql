@@ -4,46 +4,8 @@
 
 BEGIN;
 
-CREATE TABLE IF NOT EXISTS mic2.bin_transfer_corrections (
-  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  transfer_id BIGINT NOT NULL REFERENCES mic2.bin_transfers(id) ON DELETE RESTRICT,
-  corrected_outgoing_quantity INTEGER NOT NULL CHECK (corrected_outgoing_quantity >= 0),
-  corrected_received_quantity INTEGER NOT NULL CHECK (corrected_received_quantity >= 0),
-  corrected_by BIGINT NOT NULL REFERENCES mic2.employees(id) ON DELETE RESTRICT,
-  correction_reason TEXT NOT NULL CHECK (length(btrim(correction_reason)) > 0),
-  corrected_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS bin_transfer_corrections_latest_idx
-  ON mic2.bin_transfer_corrections(transfer_id, corrected_at DESC, id DESC);
-
-CREATE OR REPLACE VIEW mic2.v_bin_transfers_effective AS
-SELECT
-  bt.id AS transfer_id,
-  bt.cycle_id,
-  bt.from_employee_id,
-  bt.to_employee_id,
-  bt.outgoing_quantity AS original_outgoing_quantity,
-  bt.received_quantity AS original_received_quantity,
-  bt.discrepancy AS original_discrepancy,
-  COALESCE(latest.corrected_outgoing_quantity, bt.outgoing_quantity) AS effective_outgoing_quantity,
-  COALESCE(latest.corrected_received_quantity, bt.received_quantity) AS effective_received_quantity,
-  COALESCE(
-    latest.corrected_received_quantity - latest.corrected_outgoing_quantity,
-    bt.discrepancy
-  ) AS effective_discrepancy,
-  latest.id AS latest_correction_id,
-  latest.corrected_by AS latest_corrected_by,
-  latest.corrected_at AS latest_corrected_at,
-  latest.correction_reason
-FROM mic2.bin_transfers bt
-LEFT JOIN LATERAL (
-  SELECT c.*
-  FROM mic2.bin_transfer_corrections c
-  WHERE c.transfer_id = bt.id
-  ORDER BY c.corrected_at DESC, c.id DESC
-  LIMIT 1
-) latest ON TRUE;
+-- Table and effective view are created in migration 005. This migration
+-- adds audited corrections and append-only protection.
 
 CREATE OR REPLACE FUNCTION mic2.correct_bin_transfer(
   p_transfer_id BIGINT,
