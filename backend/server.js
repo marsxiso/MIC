@@ -8,6 +8,7 @@ const path = require('path');
 const { Pool } = require('pg');
 const { authenticate, issueToken, verifyPassword, hashPassword, createActivationCode, hashActivationCode, verifyActivationCode, activationExpiry, getJwtSecret } = require('./auth');
 const { createMic2AuthRouter, authenticateMic2Employee } = require('./mic2-auth-router');
+const { createMic2ProductionRouter } = require('./mic2-production-router');
 
 const app = express();
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -25,6 +26,7 @@ const pool = new Pool({
 });
 
 app.use('/auth/mic2', createMic2AuthRouter({ pool }));
+app.use('/api/mic2/operator', createMic2ProductionRouter({ pool }));
 
 async function runSchema() {
   const schemaPath = path.join(__dirname, 'schema.sql');
