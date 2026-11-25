@@ -19,12 +19,17 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
   v_role TEXT;
+  v_original_outgoing INTEGER;
+  v_original_received INTEGER;
   v_old_outgoing INTEGER;
   v_old_received INTEGER;
   v_new_id BIGINT;
 BEGIN
-  IF p_corrected_outgoing_quantity < 0 OR p_corrected_received_quantity < 0 THEN
-    RAISE EXCEPTION 'Corrected quantities cannot be negative';
+  IF p_corrected_outgoing_quantity IS NULL
+     OR p_corrected_received_quantity IS NULL
+     OR p_corrected_outgoing_quantity < 0
+     OR p_corrected_received_quantity < 0 THEN
+    RAISE EXCEPTION 'Corrected quantities must be non-null and non-negative';
   END IF;
 
   IF p_reason IS NULL OR length(btrim(p_reason)) = 0 THEN
@@ -41,8 +46,9 @@ BEGIN
     RAISE EXCEPTION 'Only production manager or administrator can correct a bin transfer';
   END IF;
 
+  -- Lock the source transfer and preserve its originally recorded quantities.
   SELECT outgoing_quantity, received_quantity
-    INTO v_old_outgoing, v_old_received
+    INTO v_original_outgoing, v_original_received
   FROM mic2.bin_transfers
   WHERE id = p_transfer_id
   FOR UPDATE;
@@ -51,9 +57,15 @@ BEGIN
     RAISE EXCEPTION 'Bin transfer % does not exist', p_transfer_id;
   END IF;
 
-  SELECT COALESCE(c.corrected_outgoing_quantity, v_old_outgoing),
-         COALESCE(c.corrected_received_quantity, v_old_received)
-    INTO v_old_outgoing, v_old_received
+  -- The audit "before" values are the latest effective quantities, not
+  -- necessarily the immutable values first recorded on the transfer.
+  v_old_outgoing := v_original_outgoing;
+  v_old_received := v_original_received;
+
+  SELECT
+    COALESCE(c.corrected_outgoing_quantity, v_old_outgoing),
+    COALESCE(c.corrected_received_quantity, v_old_received)
+  INTO v_old_outgoing, v_old_received
   FROM (SELECT 1) seed
   LEFT JOIN LATERAL (
     SELECT corrected_outgoing_quantity, corrected_received_quantity
@@ -64,12 +76,22 @@ BEGIN
   ) c ON TRUE;
 
   INSERT INTO mic2.bin_transfer_corrections (
-    transfer_id, corrected_outgoing_quantity, corrected_received_quantity,
-    corrected_by, correction_reason
+    transfer_id,
+    original_outgoing_quantity,
+    original_received_quantity,
+    corrected_outgoing_quantity,
+    corrected_received_quantity,
+    corrected_by,
+    correction_reason
   )
   VALUES (
-    p_transfer_id, p_corrected_outgoing_quantity, p_corrected_received_quantity,
-    p_corrected_by, btrim(p_reason)
+    p_transfer_id,
+    v_original_outgoing,
+    v_original_received,
+    p_corrected_outgoing_quantity,
+    p_corrected_received_quantity,
+    p_corrected_by,
+    btrim(p_reason)
   )
   RETURNING id INTO v_new_id;
 
