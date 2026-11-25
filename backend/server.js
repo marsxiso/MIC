@@ -5,8 +5,10 @@ const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
 const { Pool } = require('pg');
+const { authenticate, issueToken, verifyPassword, hashPassword, createActivationCode, hashActivationCode, verifyActivationCode, activationExpiry, getJwtSecret } = require('./auth');
+const { createMic2AuthRouter, authenticateMic2Employee } = require('./mic2-auth-router');
+const { createMic2ProductionRouter } = require('./mic2-production-router');
 
 const app = express();
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -23,6 +25,9 @@ const pool = new Pool({
   ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
 });
 
+app.use('/auth/mic2', createMic2AuthRouter({ pool }));
+app.use('/api/mic2/operator', createMic2ProductionRouter({ pool }));
+
 async function runSchema() {
   const schemaPath = path.join(__dirname, 'schema.sql');
   const sql = fs.readFileSync(schemaPath, 'utf8');
@@ -36,7 +41,37 @@ async function runSchema() {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)");
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(255)");
   await pool.query("ALTER TABLE inspection_defects ADD COLUMN IF NOT EXISTS review_status VARCHAR(50) DEFAULT 'На рассмотрении'");
+  const authMigration = fs.readFileSync(path.join(__dirname, 'auth-migration.sql'), 'utf8');
+  await pool.query(authMigration);
 }
+
+function authenticateCurrentAccount(req, res, next) {
+  return authenticate(req, res, async () => {
+    try {
+      const kind = req.auth?.kind;
+      if (kind !== 'user' && kind !== 'worker') {
+        return res.status(401).json({ ok: false, message: 'Недействительный тип учётной записи' });
+      }
+      const table = kind === 'user' ? 'users' : 'workers';
+      const result = await pool.query(`SELECT id, ${kind === 'user' ? 'role' : "'Рабочий' AS role"} FROM ${table} WHERE id = $1 LIMIT 1`, [req.auth.sub]);
+      const account = result.rows[0];
+      if (!account || account.role !== req.auth.role) {
+        return res.status(401).json({ ok: false, message: 'Учётная запись изменена. Войдите снова.' });
+      }
+      next();
+    } catch (error) {
+      console.error('AUTH ACCOUNT CHECK ERROR:', error);
+      res.status(500).json({ ok: false, message: 'Не удалось проверить учётную запись' });
+    }
+  });
+}
+
+function isAdmin(req) { return ['Администратор', 'admin'].includes(req.auth?.role); }
+function isControlRole(req) { return ['Контролер', 'Контрольный мастер', 'controller', 'control_master', 'quality_master', 'admin', 'Администратор'].includes(req.auth?.role); }
+function isControlMasterRole(req) { return ['Контрольный мастер', 'control_master', 'quality_master', 'admin', 'Администратор'].includes(req.auth?.role); }
+function isProductionRole(req) { return ['Производственный мастер', 'production_master', 'admin', 'Администратор'].includes(req.auth?.role); }
+function isUserIdentity(req) { return req.auth?.kind === 'user'; }
+function isWorkerIdentity(req) { return req.auth?.kind === 'worker'; }
 
 function toInt(value) {
   const n = Number(value);
@@ -127,50 +162,133 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+async function authIsLocked(login, ip) {
+  const loginKey = String(login).trim().toLowerCase();
+  const ipKey = String(ip || 'unknown');
+  const [accountResult, ipResult] = await Promise.all([
+    pool.query('SELECT locked_until FROM auth_login_attempts WHERE login_key = $1', [loginKey]),
+    pool.query('SELECT locked_until FROM auth_attempts WHERE login_key = $1 AND ip_key = $2', [loginKey, ipKey]),
+  ]);
+  const accountLocked = accountResult.rows[0]?.locked_until && new Date(accountResult.rows[0].locked_until) > new Date();
+  const ipLocked = ipResult.rows[0]?.locked_until && new Date(ipResult.rows[0].locked_until) > new Date();
+  return !!(accountLocked || ipLocked);
+}
+
+async function recordAuthFailure(login, ip) {
+  const loginKey = String(login).trim().toLowerCase();
+  const ipKey = String(ip || 'unknown');
+  await Promise.all([
+    pool.query(
+      `INSERT INTO auth_login_attempts (login_key, failed_count, locked_until, updated_at)
+       VALUES ($1, 1, NULL, NOW())
+       ON CONFLICT (login_key) DO UPDATE SET
+         failed_count = CASE WHEN auth_login_attempts.locked_until IS NOT NULL AND auth_login_attempts.locked_until <= NOW() THEN 1 ELSE auth_login_attempts.failed_count + 1 END,
+         locked_until = CASE WHEN auth_login_attempts.locked_until IS NOT NULL AND auth_login_attempts.locked_until <= NOW() THEN NULL WHEN auth_login_attempts.failed_count >= 4 THEN NOW() + INTERVAL '15 minutes' ELSE NULL END,
+         updated_at = NOW()`,
+      [loginKey]
+    ),
+    pool.query(
+      `INSERT INTO auth_attempts (login_key, ip_key, failed_count, locked_until, updated_at)
+       VALUES ($1, $2, 1, NULL, NOW())
+       ON CONFLICT (login_key, ip_key) DO UPDATE SET
+         failed_count = CASE WHEN auth_attempts.locked_until IS NOT NULL AND auth_attempts.locked_until <= NOW() THEN 1 ELSE auth_attempts.failed_count + 1 END,
+         locked_until = CASE WHEN auth_attempts.locked_until IS NOT NULL AND auth_attempts.locked_until <= NOW() THEN NULL WHEN auth_attempts.failed_count >= 4 THEN NOW() + INTERVAL '15 minutes' ELSE NULL END,
+         updated_at = NOW()`,
+      [loginKey, ipKey]
+    ),
+  ]);
+}
+
+async function clearAuthFailures(login, ip) {
+  const loginKey = String(login).trim().toLowerCase();
+  const ipKey = String(ip || 'unknown');
+  await Promise.all([
+    pool.query('DELETE FROM auth_login_attempts WHERE login_key = $1', [loginKey]),
+    pool.query('DELETE FROM auth_attempts WHERE login_key = $1 AND ip_key = $2', [loginKey, ipKey]),
+  ]);
+}
+
+app.post('/auth/activate', async (req, res) => {
+  const { login, activation_code, password, password_confirm } = req.body || {};
+  if (!login || !activation_code || !password || password !== password_confirm) {
+    return res.status(400).json({ ok: false, message: 'Проверьте логин, код и совпадение паролей' });
+  }
+  if (String(password).length < 12) {
+    return res.status(400).json({ ok: false, message: 'Пароль должен содержать не менее 12 символов' });
+  }
+  try {
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+    if (await authIsLocked(login, ip)) return res.status(429).json({ ok: false, message: 'Слишком много попыток. Повторите через 15 минут.' });
+    const userResult = await pool.query(
+      'SELECT id, login, full_name, role, activation_code_hash, activation_expires_at FROM users WHERE login = $1 LIMIT 1',
+      [String(login).trim()]
+    );
+    let identity = userResult.rows[0] ? { ...userResult.rows[0], kind: 'user' } : null;
+    if (!identity) {
+      const workerResult = await pool.query(
+        'SELECT id, login, full_name, activation_code_hash, activation_expires_at FROM workers WHERE login = $1 LIMIT 1',
+        [String(login).trim()]
+      );
+      if (workerResult.rows[0]) identity = { ...workerResult.rows[0], role: 'Рабочий', kind: 'worker' };
+    }
+    if (!identity || !identity.activation_code_hash ||
+        !identity.activation_expires_at || new Date(identity.activation_expires_at) < new Date() ||
+        !(await verifyActivationCode(String(activation_code), identity.activation_code_hash))) {
+      await recordAuthFailure(login, ip);
+      return res.status(400).json({ ok: false, message: 'Код недействителен или срок его действия истёк' });
+    }
+    await clearAuthFailures(login, ip);
+    const passwordHash = await hashPassword(String(password));
+    const table = identity.kind === 'user' ? 'users' : 'workers';
+    const consumed = await pool.query(
+      `UPDATE ${table} SET password_hash = $1, activation_code_hash = NULL, activation_expires_at = NULL WHERE id = $2 AND activation_code_hash = $3 AND activation_expires_at > NOW() RETURNING id`,
+      [passwordHash, identity.id, identity.activation_code_hash]
+    );
+    if (!consumed.rowCount) return res.status(400).json({ ok: false, message: 'Код уже использован или срок его действия истёк' });
+    const token = issueToken({ id: identity.id, kind: identity.kind, role: identity.role });
+    return res.json({ ok: true, token, user: { id: identity.id, login: identity.login, full_name: identity.full_name, role: identity.role } });
+  } catch (error) {
+    console.error('ACTIVATION ERROR:', error);
+    res.status(500).json({ ok: false, message: 'Не удалось активировать учётную запись' });
+  }
+});
+
 app.post('/auth/login', async (req, res) => {
   try {
     const { login, password } = req.body;
-    if (!login || !password) {
-      return res.status(400).json({ ok: false, message: 'Введите логин и пароль' });
+    if (!login || !password) return res.status(400).json({ ok: false, message: 'Введите логин и пароль' });
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+    if (await authIsLocked(login, ip)) return res.status(429).json({ ok: false, message: 'Слишком много попыток. Повторите через 15 минут.' });
+
+    const userResult = await pool.query(
+      'SELECT id, login, full_name, role, password_hash FROM users WHERE login = $1 LIMIT 1',
+      [String(login).trim()]
+    );
+    let identity = userResult.rows[0] ? { ...userResult.rows[0], kind: 'user' } : null;
+
+    if (!identity) {
+      const workerResult = await pool.query(
+        'SELECT id, login, full_name, password_hash FROM workers WHERE login = $1 LIMIT 1',
+        [String(login).trim()]
+      );
+      if (workerResult.rows[0]) identity = { ...workerResult.rows[0], role: 'Рабочий', kind: 'worker' };
     }
 
-    const result = await pool.query(
-      'SELECT * FROM users WHERE login = $1 AND password_hash = $2',
-      [login, password]
-    );
-
-    if (result.rows.length > 0) {
-      const user = result.rows[0];
-      return res.json({
-        ok: true,
-        token: 'ok',
-        user: {
-          id: user.id,
-          login: user.login,
-          full_name: user.full_name,
-          role: user.role,
-        },
-      });
-    }
-
-    const workerResult = await pool.query(
-      'SELECT * FROM workers WHERE login = $1 AND password_hash = $2',
-      [login, password]
-    );
-
-    if (workerResult.rows.length === 0) {
+    if (!identity || !(await verifyPassword(password, identity.password_hash))) {
+      await recordAuthFailure(login, ip);
       return res.status(401).json({ ok: false, message: 'Неверный логин или пароль' });
     }
+    await clearAuthFailures(login, ip);
 
-    const worker = workerResult.rows[0];
-    res.json({
+    const token = issueToken({ id: identity.id, kind: identity.kind, role: identity.role });
+    return res.json({
       ok: true,
-      token: 'ok',
+      token,
       user: {
-        id: worker.id,
-        login: worker.login,
-        full_name: worker.full_name,
-        role: 'Рабочий',
+        id: identity.id,
+        login: identity.login,
+        full_name: identity.full_name,
+        role: identity.role,
       },
     });
   } catch (error) {
@@ -179,9 +297,33 @@ app.post('/auth/login', async (req, res) => {
   }
 });
 
+// All business API endpoints require a signed-in identity.
+// Health and login routes are intentionally declared before this middleware.
+// MIC 2.0 profile endpoint is registered before legacy /api authentication.
+app.get('/api/mic2/me', authenticateMic2Employee(pool), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, employee_no, full_name, department, job_title,
+              role_code, login, must_change_password, account_status
+         FROM mic2.employees
+        WHERE id = $1`,
+      [req.employee.id]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ ok: false, message: 'Сотрудник не найден' });
+    }
+    res.json({ ok: true, employee: result.rows[0] });
+  } catch (error) {
+    console.error('MIC2 ME ROUTE ERROR:', error);
+    res.status(500).json({ ok: false, message: 'Не удалось получить профиль сотрудника' });
+  }
+});
+
+app.use('/api', authenticateCurrentAccount);
+
 app.get('/api/users', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM users ORDER BY id');
+    const result = await pool.query('SELECT id, full_name, login, role FROM users ORDER BY id');
     res.json(result.rows);
   } catch (error) {
     console.error('GET USERS ERROR:', error);
@@ -193,37 +335,54 @@ app.get('/api/users', async (req, res) => {
 
 app.post('/api/users', async (req, res) => {
   try {
-    const { full_name, login, password, role, editor_role } = req.body;
-    if (editor_role !== 'Администратор') {
+    const { full_name, login, role } = req.body;
+    if (req.auth.role !== 'Администратор' && req.auth.role !== 'admin') {
       return res.status(403).json({ ok: false, message: 'Только администратор может создавать пользователей' });
     }
-    if (!full_name || !login || !password || !role) {
+    if (!full_name || !login || !role) {
       return res.status(400).json({ ok: false, message: 'Заполните имя, логин, пароль и роль' });
     }
     const allowedRoles = ['Администратор', 'Производственный мастер', 'Контрольный мастер', 'Контролер', 'admin', 'production_master', 'control_master', 'quality_master', 'controller'];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ ok: false, message: 'Некорректная роль пользователя' });
     }
-    const duplicate = await pool.query('SELECT id FROM users WHERE login = $1', [String(login).trim()]);
+    const duplicate = await pool.query('SELECT id FROM users WHERE login = $1 UNION ALL SELECT id FROM workers WHERE login = $1 LIMIT 1', [String(login).trim()]);
     if (duplicate.rows.length > 0) {
       return res.status(400).json({ ok: false, message: 'Пользователь с таким логином уже существует' });
     }
+    const activationCode = createActivationCode();
     const result = await pool.query(
-      'INSERT INTO users (full_name, login, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING *',
-      [String(full_name).trim(), String(login).trim(), String(password).trim(), role]
+      'INSERT INTO users (full_name, login, password_hash, role, activation_code_hash, activation_expires_at) VALUES ($1, $2, NULL, $3, $4, $5) RETURNING id, full_name, login, role',
+      [String(full_name).trim(), String(login).trim(), role, await hashActivationCode(activationCode), activationExpiry()]
     );
-    res.json(result.rows[0]);
+    res.json({ ...result.rows[0], activation_code: activationCode });
   } catch (error) {
     console.error('CREATE USER ERROR:', error);
     res.status(500).json({ ok: false, message: 'Не удалось создать пользователя' });
   }
 });
 
+app.post('/api/users/:id/activation-code', async (req, res) => {
+  try {
+    if (!isAdmin(req)) return res.status(403).json({ ok: false, message: 'Только администратор может выдать код' });
+    const code = createActivationCode();
+    const result = await pool.query(
+      'UPDATE users SET password_hash = NULL, activation_code_hash = $1, activation_expires_at = $2 WHERE id = $3 RETURNING id, login',
+      [await hashActivationCode(code), activationExpiry(), toInt(req.params.id)]
+    );
+    if (!result.rows[0]) return res.status(404).json({ ok: false, message: 'Пользователь не найден' });
+    res.json({ ok: true, login: result.rows[0].login, activation_code: code });
+  } catch (error) {
+    console.error('ISSUE USER ACTIVATION CODE ERROR:', error);
+    res.status(500).json({ ok: false, message: 'Не удалось выдать код' });
+  }
+});
+
 app.put('/api/users/:id', async (req, res) => {
   try {
     const userId = toInt(req.params.id);
-    const { full_name, login, password, role, editor_role } = req.body;
-    if (editor_role !== 'Администратор') {
+    const { full_name, login, password, role } = req.body;
+    if (req.auth.role !== 'Администратор' && req.auth.role !== 'admin') {
       return res.status(403).json({ ok: false, message: 'Только администратор может редактировать пользователей' });
     }
     if (!full_name || !login || !role) {
@@ -232,14 +391,14 @@ app.put('/api/users/:id', async (req, res) => {
     const fields = [full_name.trim(), login.trim(), role, userId];
     let query = `UPDATE users SET full_name = $1, login = $2, role = $3`;
     if (password && String(password).trim()) {
-      query += `, password_hash = $5`;
-      fields.push(String(password).trim());
-      query += ` WHERE id = $4 RETURNING *`;
+      query += `, password_hash = $5, activation_code_hash = NULL, activation_expires_at = NULL`;
+      fields.push(await hashPassword(String(password).trim()));
+      query += ` WHERE id = $4 RETURNING id, full_name, login, role`;
       const reordered = [fields[0], fields[1], fields[2], fields[3], fields[4]];
       const result = await pool.query(query, reordered);
       return res.json(result.rows[0]);
     }
-    query += ` WHERE id = $4 RETURNING *`;
+    query += ` WHERE id = $4 RETURNING id, full_name, login, role`;
     const result = await pool.query(query, fields);
     res.json(result.rows[0]);
   } catch (error) {
@@ -251,8 +410,7 @@ app.put('/api/users/:id', async (req, res) => {
 app.delete('/api/users/:id', async (req, res) => {
   try {
     const userId = toInt(req.params.id);
-    const { editor_role } = req.body;
-    if (editor_role !== 'Администратор') {
+    if (req.auth.role !== 'Администратор' && req.auth.role !== 'admin') {
       return res.status(403).json({ ok: false, message: 'Только администратор может удалять пользователей' });
     }
     const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
@@ -281,15 +439,19 @@ app.get('/api/workers', async (req, res) => {
 
 app.post('/api/workers', async (req, res) => {
   try {
-    const { full_name, login, password } = req.body;
-    if (!full_name) {
+    const { full_name, login } = req.body;
+    if (req.auth.role !== 'Администратор' && req.auth.role !== 'admin') return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
+    if (!full_name || !login) {
       return res.status(400).json({ ok: false, message: 'full_name обязателен' });
     }
+    const duplicate = await pool.query('SELECT id FROM users WHERE login = $1 UNION ALL SELECT id FROM workers WHERE login = $1 LIMIT 1', [String(login).trim()]);
+    if (duplicate.rows.length) return res.status(400).json({ ok: false, message: 'Сотрудник с таким логином уже существует' });
+    const activationCode = createActivationCode();
     const result = await pool.query(
-      'INSERT INTO workers (full_name, login, password_hash) VALUES ($1, $2, $3) RETURNING id, full_name, login',
-      [full_name.trim(), login ? String(login).trim() : null, password ? String(password).trim() : null]
+      'INSERT INTO workers (full_name, login, password_hash, activation_code_hash, activation_expires_at) VALUES ($1, $2, NULL, $3, $4) RETURNING id, full_name, login',
+      [full_name.trim(), String(login).trim(), await hashActivationCode(activationCode), activationExpiry()]
     );
-    res.json(result.rows[0]);
+    res.json({ ...result.rows[0], activation_code: activationCode });
   } catch (error) {
     console.error('CREATE WORKER ERROR:', error);
     res.status(500).json({ ok: false, message: 'Не удалось добавить рабочего' });
@@ -297,11 +459,27 @@ app.post('/api/workers', async (req, res) => {
 });
 
 
+app.post('/api/workers/:id/activation-code', async (req, res) => {
+  try {
+    if (!isAdmin(req)) return res.status(403).json({ ok: false, message: 'Только администратор может выдать код' });
+    const code = createActivationCode();
+    const result = await pool.query(
+      'UPDATE workers SET password_hash = NULL, activation_code_hash = $1, activation_expires_at = $2 WHERE id = $3 RETURNING id, login',
+      [await hashActivationCode(code), activationExpiry(), toInt(req.params.id)]
+    );
+    if (!result.rows[0]) return res.status(404).json({ ok: false, message: 'Рабочий не найден' });
+    res.json({ ok: true, login: result.rows[0].login, activation_code: code });
+  } catch (error) {
+    console.error('ISSUE WORKER ACTIVATION CODE ERROR:', error);
+    res.status(500).json({ ok: false, message: 'Не удалось выдать код' });
+  }
+});
+
 app.put('/api/workers/:id', async (req, res) => {
   try {
     const workerId = toInt(req.params.id);
-    const { full_name, login, password, editor_role } = req.body;
-    if (editor_role !== 'Администратор') {
+    const { full_name, login, password } = req.body;
+    if (req.auth.role !== 'Администратор' && req.auth.role !== 'admin') {
       return res.status(403).json({ ok: false, message: 'Только администратор может редактировать рабочих' });
     }
     if (!full_name) {
@@ -309,7 +487,7 @@ app.put('/api/workers/:id', async (req, res) => {
     }
     let result;
     if (password && String(password).trim()) {
-      result = await pool.query('UPDATE workers SET full_name = $1, login = $2, password_hash = $3 WHERE id = $4 RETURNING id, full_name, login', [full_name.trim(), login ? String(login).trim() : null, String(password).trim(), workerId]);
+      result = await pool.query('UPDATE workers SET full_name = $1, login = $2, password_hash = $3, activation_code_hash = NULL, activation_expires_at = NULL WHERE id = $4 RETURNING id, full_name, login', [full_name.trim(), login ? String(login).trim() : null, await hashPassword(String(password).trim()), workerId]);
     } else {
       result = await pool.query('UPDATE workers SET full_name = $1, login = $2 WHERE id = $3 RETURNING id, full_name, login', [full_name.trim(), login ? String(login).trim() : null, workerId]);
     }
@@ -324,8 +502,7 @@ app.put('/api/workers/:id', async (req, res) => {
 app.delete('/api/workers/:id', async (req, res) => {
   try {
     const workerId = toInt(req.params.id);
-    const { editor_role } = req.body;
-    if (editor_role !== 'Администратор') {
+    if (req.auth.role !== 'Администратор' && req.auth.role !== 'admin') {
       return res.status(403).json({ ok: false, message: 'Только администратор может удалять рабочих' });
     }
     await pool.query('DELETE FROM workers WHERE id = $1', [workerId]);
@@ -371,7 +548,8 @@ app.get('/api/batches', async (req, res) => {
 
 app.post('/api/batches', async (req, res) => {
   try {
-    const { batch_number, product_name, quantity, created_by, assigned_worker_id, assigned_shift_type, manufacture_date } = req.body;
+    const { batch_number, product_name, quantity, assigned_worker_id, assigned_shift_type, manufacture_date } = req.body;
+    if (!isUserIdentity(req) || !isProductionRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     if (!batch_number || !product_name || !assigned_worker_id) {
       return res.status(400).json({ ok: false, message: 'Не все обязательные поля заполнены' });
     }
@@ -379,7 +557,7 @@ app.post('/api/batches', async (req, res) => {
       `INSERT INTO batches (batch_number, product_name, quantity, created_by, assigned_worker_id, assigned_shift_type, status, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, 'Создана', COALESCE($7::timestamptz, NOW()))
        RETURNING *`,
-      [batch_number, product_name.trim(), quantity || 0, created_by || null, assigned_worker_id, assigned_shift_type || 'day', manufacture_date || null]
+      [batch_number, product_name.trim(), quantity || 0, req.auth.sub, assigned_worker_id, assigned_shift_type || 'day', manufacture_date || null]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -390,13 +568,14 @@ app.post('/api/batches', async (req, res) => {
 
 app.put('/api/batches/:id', async (req, res) => {
   try {
+    if (!isUserIdentity(req) || !isProductionRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const batchId = toInt(req.params.id);
-    const editorId = toInt(req.body.editor_id);
+    const editorId = toInt(req.auth.sub);
     const { product_name, quantity, assigned_worker_id, manufacture_date, assigned_shift_type } = req.body;
     const batchResult = await pool.query('SELECT * FROM batches WHERE id = $1', [batchId]);
     const batch = batchResult.rows[0];
     if (!batch) return res.status(404).json({ ok: false, message: 'Партия не найдена' });
-    if (String(batch.created_by || '') !== String(editorId || '')) {
+    if (!isAdmin(req) && String(batch.created_by || '') !== String(editorId || '')) {
       return res.status(403).json({ ok: false, message: 'Можно редактировать только свои партии' });
     }
     if (batch.status !== 'Создана') {
@@ -422,14 +601,15 @@ app.put('/api/batches/:id', async (req, res) => {
 
 app.delete('/api/batches/:id', async (req, res) => {
   try {
+    if (!isUserIdentity(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const batchId = toInt(req.params.id);
-    const editorId = toInt(req.body.editor_id || req.query.editor_id);
-    const editorRole = req.body.editor_role || req.query.editor_role;
+    const editorId = toInt(req.auth.sub);
+    const editorRole = req.auth.role;
     const batchResult = await pool.query('SELECT * FROM batches WHERE id = $1', [batchId]);
     const batch = batchResult.rows[0];
     if (!batch) return res.status(404).json({ ok: false, message: 'Партия не найдена' });
-    const isAdmin = editorRole === 'Администратор' || editorRole === 'admin';
-    if (!isAdmin && String(batch.created_by || '') !== String(editorId || '')) {
+    const admin = isAdmin(req);
+    if (!admin && String(batch.created_by || '') !== String(editorId || '')) {
       return res.status(403).json({ ok: false, message: 'Можно удалять только свои партии' });
     }
     await pool.query('DELETE FROM batches WHERE id = $1', [batchId]);
@@ -443,7 +623,8 @@ app.delete('/api/batches/:id', async (req, res) => {
 app.post('/api/batches/:id/worker-accept', async (req, res) => {
   try {
     const batchId = toInt(req.params.id);
-    const workerId = toInt(req.body.worker_id);
+    if (!isWorkerIdentity(req)) return res.status(403).json({ ok: false, message: 'Только рабочий может выполнить эту операцию' });
+    const workerId = toInt(req.auth.sub);
     if (!batchId || !workerId) {
       return res.status(400).json({ ok: false, message: 'batch_id и worker_id обязательны' });
     }
@@ -474,7 +655,8 @@ app.post('/api/batches/:id/worker-accept', async (req, res) => {
 app.post('/api/batches/:id/worker-complete', async (req, res) => {
   try {
     const batchId = toInt(req.params.id);
-    const workerId = toInt(req.body.worker_id);
+    if (!isWorkerIdentity(req)) return res.status(403).json({ ok: false, message: 'Только рабочий может выполнить эту операцию' });
+    const workerId = toInt(req.auth.sub);
     if (!batchId || !workerId) {
       return res.status(400).json({ ok: false, message: 'batch_id и worker_id обязательны' });
     }
@@ -505,7 +687,8 @@ app.post('/api/batches/:id/worker-complete', async (req, res) => {
 app.post('/api/batches/:id/accept', async (req, res) => {
   try {
     const batchId = toInt(req.params.id);
-    const userId = toInt(req.body.user_id);
+    if (!isUserIdentity(req) || !isControlRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
+    const userId = toInt(req.auth.sub);
     if (!batchId || !userId) {
       return res.status(400).json({ ok: false, message: 'batch_id и user_id обязательны' });
     }
@@ -535,7 +718,8 @@ app.post('/api/batches/:id/accept', async (req, res) => {
 app.post('/api/batches/:id/cancel-accept', async (req, res) => {
   try {
     const batchId = toInt(req.params.id);
-    const userId = toInt(req.body.user_id);
+    if (!isUserIdentity(req) || !isControlRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
+    const userId = toInt(req.auth.sub);
     if (!batchId || !userId) {
       return res.status(400).json({ ok: false, message: 'batch_id и user_id обязательны' });
     }
@@ -565,12 +749,13 @@ app.post('/api/batches/:id/cancel-accept', async (req, res) => {
 
 app.post('/api/batches/:id/mark-ready-to-send', async (req, res) => {
   try {
+    if (!isUserIdentity(req) || !isProductionRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const batchId = toInt(req.params.id);
-    const editorId = toInt(req.body.editor_id);
+    const editorId = toInt(req.auth.sub);
     const batchResult = await pool.query('SELECT * FROM batches WHERE id = $1', [batchId]);
     const batch = batchResult.rows[0];
     if (!batch) return res.status(404).json({ ok: false, message: 'Партия не найдена' });
-    if (String(batch.created_by || '') !== String(editorId || '')) {
+    if (!isAdmin(req) && String(batch.created_by || '') !== String(editorId || '')) {
       return res.status(403).json({ ok: false, message: 'Подготовить к отправке может только создатель партии' });
     }
     if (batch.status !== 'Проверена') {
@@ -589,12 +774,13 @@ app.post('/api/batches/:id/mark-ready-to-send', async (req, res) => {
 
 app.post('/api/batches/:id/send-to-assembly', async (req, res) => {
   try {
+    if (!isUserIdentity(req) || !isProductionRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const batchId = toInt(req.params.id);
-    const editorId = toInt(req.body.editor_id);
+    const editorId = toInt(req.auth.sub);
     const batchResult = await pool.query('SELECT * FROM batches WHERE id = $1', [batchId]);
     const batch = batchResult.rows[0];
     if (!batch) return res.status(404).json({ ok: false, message: 'Партия не найдена' });
-    if (String(batch.created_by || '') !== String(editorId || '')) {
+    if (!isAdmin(req) && String(batch.created_by || '') !== String(editorId || '')) {
       return res.status(403).json({ ok: false, message: 'Отправить на сборку может только создатель партии' });
     }
     if (batch.status !== 'Готова к отправке') {
@@ -637,8 +823,9 @@ app.get('/api/shifts', async (req, res) => {
 
 app.post('/api/shifts', async (req, res) => {
   try {
-    const { worker_id, user_id, shift_date, shift_type, assigned_by, employee_type } = req.body;
-    if (!shift_date || !shift_type || !employee_type) {
+    const { worker_id, user_id, shift_date, shift_type, employee_type } = req.body;
+    if (!isUserIdentity(req) || (employee_type === 'worker' && !isProductionRole(req)) || (employee_type === 'controller' && !isControlRole(req))) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
+    if (!shift_date || !shift_type || !['worker', 'controller'].includes(employee_type)) {
       return res.status(400).json({ ok: false, message: 'Не все обязательные поля заполнены' });
     }
     if (employee_type === 'worker' && !worker_id) {
@@ -665,7 +852,7 @@ app.post('/api/shifts', async (req, res) => {
       `INSERT INTO shifts (worker_id, user_id, shift_date, shift_type, assigned_by, employee_type, employee_name)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [worker_id || null, user_id || null, shift_date, shift_type, assigned_by || null, employee_type, employeeName]
+      [worker_id || null, user_id || null, shift_date, shift_type, req.auth.sub, employee_type, employeeName]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -676,9 +863,9 @@ app.post('/api/shifts', async (req, res) => {
 
 app.put('/api/shifts/:id', async (req, res) => {
   try {
+    if (!isUserIdentity(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const shiftId = toInt(req.params.id);
-    const editorId = toInt(req.body.editor_id);
-    const editorRole = req.body.editor_role;
+    const editorId = toInt(req.auth.sub);
     const { shift_date, shift_type, employee_type, worker_id, user_id } = req.body;
     const shiftResult = await pool.query('SELECT * FROM shifts WHERE id = $1', [shiftId]);
     const shift = shiftResult.rows[0];
@@ -690,14 +877,13 @@ app.put('/api/shifts/:id', async (req, res) => {
     const nextShiftDate = shift_date || shift.shift_date;
     const nextShiftType = shift_type || shift.shift_type || 'day';
 
-    const isAdmin = editorRole === 'Администратор' || editorRole === 'admin';
-    const isProductionMasterEditingWorker = editorRole === 'Производственный мастер' && nextEmployeeType === 'worker';
-    const isControlMasterEditingController = editorRole === 'Контрольный мастер' && nextEmployeeType === 'controller';
-    const isOwner = String(shift.assigned_by || '') === String(editorId || '');
-    if (!isAdmin && !isProductionMasterEditingWorker && !isControlMasterEditingController && !isOwner) {
+    const admin = isAdmin(req);
+    const isProductionMasterEditingWorker = isProductionRole(req) && nextEmployeeType === 'worker';
+    const isControlMasterEditingController = isControlMasterRole(req) && nextEmployeeType === 'controller';
+    if (!admin && !isProductionMasterEditingWorker && !isControlMasterEditingController) {
       return res.status(403).json({ ok: false, message: 'Нет прав на редактирование этой смены' });
     }
-    if (!nextShiftDate || !nextEmployeeType || (nextEmployeeType === 'worker' && !nextWorkerId) || (nextEmployeeType === 'controller' && !nextUserId)) {
+    if (!nextShiftDate || !['worker', 'controller'].includes(nextEmployeeType) || (nextEmployeeType === 'worker' && !nextWorkerId) || (nextEmployeeType === 'controller' && !nextUserId)) {
       return res.status(400).json({ ok: false, message: 'Заполните дату и сотрудника' });
     }
 
@@ -734,17 +920,17 @@ app.put('/api/shifts/:id', async (req, res) => {
 
 app.delete('/api/shifts/:id', async (req, res) => {
   try {
+    if (!isUserIdentity(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const shiftId = toInt(req.params.id);
-    const editorId = toInt(req.body.editor_id || req.query.editor_id);
-    const editorRole = req.body.editor_role || req.query.editor_role;
+    const editorId = toInt(req.auth.sub);
     const shiftResult = await pool.query('SELECT * FROM shifts WHERE id = $1', [shiftId]);
     const shift = shiftResult.rows[0];
     if (!shift) return res.status(404).json({ ok: false, message: 'Смена не найдена' });
-    const isAdmin = editorRole === 'Администратор' || editorRole === 'admin';
+    const admin = isAdmin(req);
     const shiftEmployeeType = shift.employee_type || (shift.user_id ? 'controller' : 'worker');
-    const isProductionMasterDeletingWorker = editorRole === 'Производственный мастер' && shiftEmployeeType === 'worker';
-    const isControlMasterDeletingController = editorRole === 'Контрольный мастер' && shiftEmployeeType === 'controller';
-    if (!isAdmin && !isProductionMasterDeletingWorker && !isControlMasterDeletingController && String(shift.assigned_by || '') !== String(editorId || '')) {
+    const isProductionMasterDeletingWorker = isProductionRole(req) && shiftEmployeeType === 'worker';
+    const isControlMasterDeletingController = isControlMasterRole(req) && shiftEmployeeType === 'controller';
+    if (!admin && !isProductionMasterDeletingWorker && !isControlMasterDeletingController) {
       return res.status(403).json({ ok: false, message: 'Нет прав на удаление этой смены' });
     }
     await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
@@ -803,12 +989,8 @@ app.post('/api/inspections', async (req, res) => {
       defects,
     } = req.body;
 
-    let resolvedInspectorId = toInt(inspector_id);
-    if (!resolvedInspectorId && inspector_name) {
-      const inspectorResult = await client.query('SELECT id FROM users WHERE full_name = $1 LIMIT 1', [inspector_name]);
-      resolvedInspectorId = toInt(inspectorResult.rows[0]?.id);
-    }
-
+    if (!isUserIdentity(req) || !isControlRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
+    let resolvedInspectorId = toInt(req.auth.sub);
     if (!batch_id || !resolvedInspectorId) {
       return res.status(400).json({ ok: false, message: 'batch_id и inspector_id обязательны' });
     }
@@ -863,8 +1045,9 @@ app.post('/api/inspections', async (req, res) => {
 app.put('/api/inspections/:id', async (req, res) => {
   const client = await pool.connect();
   try {
+    if (!isUserIdentity(req) || !isControlRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const inspectionId = toInt(req.params.id);
-    const editorId = toInt(req.body.editor_id);
+    const editorId = toInt(req.auth.sub);
     const {
       visual_conclusion,
       geometry_conclusion,
@@ -925,6 +1108,7 @@ app.put('/api/inspections/:id', async (req, res) => {
 
 app.put('/api/inspection-defects/:id/status', async (req, res) => {
   try {
+    if (!isUserIdentity(req) || !isControlRole(req)) return res.status(403).json({ ok: false, message: 'Недостаточно прав' });
     const defectId = toInt(req.params.id);
     const { review_status } = req.body;
     if (!defectId || !review_status) {
@@ -947,7 +1131,7 @@ app.put('/api/inspection-defects/:id/status', async (req, res) => {
   }
 });
 
-app.post('/api/upload-image', upload.single('file'), async (req, res) => {
+app.post('/api/upload-image', authenticateCurrentAccount, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ ok: false, message: 'Файл не загружен' });
@@ -962,34 +1146,13 @@ app.post('/api/upload-image', upload.single('file'), async (req, res) => {
   }
 });
 
-app.post('/analyze-defect', upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ ok: false, message: 'Файл не загружен' });
-    }
-
-    const image = fs.readFileSync(req.file.path, { encoding: 'base64' });
-    const response = await axios({
-      method: 'POST',
-      url: process.env.ROBOFLOW_MODEL_URL,
-      params: { api_key: process.env.ROBOFLOW_API_KEY },
-      data: image,
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    });
-
-    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-    res.json(response.data);
-  } catch (error) {
-    console.error('AI ERROR:', error?.response?.data || error.message);
-    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-    res.status(500).json({ ok: false, message: 'Ошибка анализа изображения' });
-  }
-});
+// AI analysis endpoint removed: MIC 2.0 uses manual defect entry.
 
 const PORT = process.env.PORT || 8000;
 
 runSchema()
   .then(() => {
+    getJwtSecret();
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`Server started on port ${PORT}`);
     });
