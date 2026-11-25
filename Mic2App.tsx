@@ -34,6 +34,23 @@ type Employee = {
   must_change_password?: boolean;
 };
 
+type ProductionBin = {
+  id: number; bin_code: string; bin_status: 'free' | 'occupied' | 'archived';
+  active_cycle_id?: number | null; product_name_snapshot?: string | null;
+  responsible_employee_id?: number | string | null; responsible_employee_name?: string | null;
+};
+type ProductionProduct = {
+  id: number; product_code: string; product_name: string; box_quantity_norm: number;
+  setup_id: number; setup_code: string; setup_name: string;
+};
+type ProductionCycle = {
+  id: number; bin_id: number; bin_code: string; cycle_no: number;
+  product_code_snapshot: string; product_name_snapshot: string; setup_code_snapshot: string;
+  responsible_employee_id: number | string; responsible_employee_name: string;
+  pending_qc: number; good_unboxed: number; rework: number; isolator: number; packed: number; scrapped: number;
+};
+type ProductionWorkspace = { bins: ProductionBin[]; products: ProductionProduct[]; cycles: ProductionCycle[] };
+
 type ModuleItem = {
   key: string;
   title: string;
@@ -100,6 +117,15 @@ export default function Mic2App() {
   const [activationConfirm, setActivationConfirm] = useState('');
   const [issuedCode, setIssuedCode] = useState('');
   const [issuedLogin, setIssuedLogin] = useState('');
+  const [productionWorkspace, setProductionWorkspace] = useState<ProductionWorkspace | null>(null);
+  const [productionLoading, setProductionLoading] = useState(false);
+  const [productionError, setProductionError] = useState('');
+  const [selectedBinId, setSelectedBinId] = useState('');
+  const [selectedProductId, setSelectedProductId] = useState('');
+  const [selectedSetupId, setSelectedSetupId] = useState('');
+  const [outputCycleId, setOutputCycleId] = useState('');
+  const [outputQuantity, setOutputQuantity] = useState('');
+  const [productionSaving, setProductionSaving] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -126,6 +152,76 @@ export default function Mic2App() {
     () => employee ? MODULES.filter((item) => item.roles.includes(employee.role)) : [],
     [employee],
   );
+
+  useEffect(() => {
+    if (!employee || !token || activeModule !== 'production') return;
+    let cancelled = false;
+    setProductionLoading(true);
+    setProductionError('');
+    fetch(`${API_URL}/api/mic2/operator/workspace`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(readResponse)
+      .then((data) => {
+        if (!data?.ok) throw new Error(data?.message || 'Не удалось загрузить данные производства');
+        if (!cancelled) setProductionWorkspace({ bins: data.bins || [], products: data.products || [], cycles: data.cycles || [] });
+      })
+      .catch((e) => { if (!cancelled) setProductionError(e instanceof Error ? e.message : 'Ошибка загрузки'); })
+      .finally(() => { if (!cancelled) setProductionLoading(false); });
+    return () => { cancelled = true; };
+  }, [employee, token, activeModule]);
+
+  async function refreshProductionWorkspace() {
+    if (!token) return;
+    setProductionLoading(true);
+    setProductionError('');
+    try {
+      const response = await fetch(`${API_URL}/api/mic2/operator/workspace`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await readResponse(response);
+      if (!response.ok || !data?.ok) throw new Error(data?.message || 'Не удалось обновить производство');
+      setProductionWorkspace({ bins: data.bins || [], products: data.products || [], cycles: data.cycles || [] });
+    } catch (e) { setProductionError(e instanceof Error ? e.message : 'Ошибка обновления'); }
+    finally { setProductionLoading(false); }
+  }
+
+  async function startProductionCycle() {
+    if (!selectedBinId || !selectedProductId || !selectedSetupId || !token) {
+      setProductionError('Выберите контейнер, продукт и наладку'); return;
+    }
+    setProductionSaving(true); setProductionError('');
+    try {
+      const response = await fetch(`${API_URL}/api/mic2/operator/cycles`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bin_id: Number(selectedBinId), product_id: Number(selectedProductId), setup_id: Number(selectedSetupId) }),
+      });
+      const data = await readResponse(response);
+      if (!response.ok || !data?.ok) throw new Error(data?.message || 'Не удалось запустить цикл');
+      setSelectedBinId(''); setSelectedProductId(''); setSelectedSetupId('');
+      await refreshProductionWorkspace();
+    } catch (e) { setProductionError(e instanceof Error ? e.message : 'Ошибка запуска цикла'); }
+    finally { setProductionSaving(false); }
+  }
+
+  async function recordProductionOutput() {
+    const quantity = Number(outputQuantity);
+    if (!outputCycleId || !Number.isSafeInteger(quantity) || quantity <= 0 || !token) {
+      setProductionError('Укажите цикл и положительное количество деталей'); return;
+    }
+    setProductionSaving(true); setProductionError('');
+    try {
+      const response = await fetch(`${API_URL}/api/mic2/operator/cycles/${outputCycleId}/output`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quantity }),
+      });
+      const data = await readResponse(response);
+      if (!response.ok || !data?.ok) throw new Error(data?.message || 'Не удалось сохранить выпуск');
+      setOutputQuantity('');
+      await refreshProductionWorkspace();
+    } catch (e) { setProductionError(e instanceof Error ? e.message : 'Ошибка сохранения выпуска'); }
+    finally { setProductionSaving(false); }
+  }
 
   async function signIn() {
     if (!login.trim() || !password) { setError('Введите логин и пароль'); return; }
@@ -321,11 +417,70 @@ export default function Mic2App() {
               <Text style={styles.eyebrow}>РАЗДЕЛ MIC 2.0</Text>
               <Text style={styles.modulePageTitle}>{selectedModule?.title || 'Раздел'}</Text>
               <Text style={styles.modulePageSubtitle}>{selectedModule?.subtitle}</Text>
-              <View style={styles.comingSoon}>
+              {activeModule === 'production' ? (
+                <View>
+                  <View style={styles.productionHeader}>
+                    <View><Text style={styles.productionTitle}>Производственный участок</Text><Text style={styles.productionHint}>Контейнеры · циклы · выпуск деталей</Text></View>
+                    <Pressable onPress={refreshProductionWorkspace} style={styles.refreshButton}><Text style={styles.refreshText}>Обновить</Text></Pressable>
+                  </View>
+                  {productionLoading && <ActivityIndicator color="#67D5C2" style={{ marginVertical: 14 }} />}
+                  {!!productionError && <View style={styles.errorBox}><Text style={styles.errorText}>{productionError}</Text></View>}
+                  <View style={styles.productionCard}>
+                    <Text style={styles.productionCardTitle}>Запустить производственный цикл</Text>
+                    <Text style={styles.fieldLabel}>Свободный контейнер</Text>
+                    <View style={styles.choiceWrap}>
+                      {(productionWorkspace?.bins || []).filter((b) => b.bin_status === 'free').map((b) => (
+                        <Pressable key={b.id} onPress={() => setSelectedBinId(String(b.id))} style={[styles.choiceChip, selectedBinId === String(b.id) && styles.choiceChipActive]}>
+                          <Text style={[styles.choiceText, selectedBinId === String(b.id) && styles.choiceTextActive]}>Контейнер {b.bin_code}</Text>
+                        </Pressable>
+                      ))}
+                      {productionWorkspace && !productionWorkspace.bins.some((b) => b.bin_status === 'free') && <Text style={styles.productionMuted}>Свободных контейнеров нет</Text>}
+                    </View>
+                    <Text style={styles.fieldLabel}>Продукт и наладка</Text>
+                    {(productionWorkspace?.products || []).map((p) => (
+                      <Pressable key={p.setup_id} onPress={() => { setSelectedProductId(String(p.id)); setSelectedSetupId(String(p.setup_id)); }} style={[styles.productChoice, selectedSetupId === String(p.setup_id) && styles.productChoiceActive]}>
+                        <View style={{ flex: 1 }}><Text style={styles.productChoiceName}>{p.product_name}</Text><Text style={styles.productChoiceMeta}>{p.product_code} · {p.setup_name} ({p.setup_code}) · норма коробки {p.box_quantity_norm}</Text></View>
+                        <Text style={styles.choiceTick}>{selectedSetupId === String(p.setup_id) ? '✓' : '○'}</Text>
+                      </Pressable>
+                    ))}
+                    {productionWorkspace && productionWorkspace.products.length === 0 && <Text style={styles.productionMuted}>Нет активных продуктов с настроенной наладкой</Text>}
+                    <Pressable onPress={startProductionCycle} disabled={productionSaving || productionLoading} style={({ pressed }) => [styles.loginButton, pressed && styles.pressed, (productionSaving || productionLoading) && styles.disabled]}>
+                      {productionSaving ? <ActivityIndicator color="#071A1B" /> : <Text style={styles.loginButtonText}>Запустить цикл</Text>}
+                    </Pressable>
+                  </View>
+
+                  <View style={styles.productionCard}>
+                    <Text style={styles.productionCardTitle}>Текущие производственные циклы</Text>
+                    {(productionWorkspace?.cycles || []).map((cycle) => (
+                      <View key={cycle.id} style={styles.cycleCard}>
+                        <View style={styles.cycleTop}><Text style={styles.cycleName}>Контейнер {cycle.bin_code} · цикл №{cycle.cycle_no}</Text><Text style={styles.cycleStatus}>АКТИВЕН</Text></View>
+                        <Text style={styles.productChoiceMeta}>{cycle.product_code_snapshot} · {cycle.product_name_snapshot} · наладка {cycle.setup_code_snapshot}</Text>
+                        <Text style={styles.productionMuted}>Ответственный: {cycle.responsible_employee_name}</Text>
+                        <View style={styles.balanceGrid}>
+                          <View style={styles.balanceCell}><Text style={styles.balanceValue}>{cycle.pending_qc}</Text><Text style={styles.balanceLabel}>Ожидает ОТК</Text></View>
+                          <View style={styles.balanceCell}><Text style={styles.balanceValue}>{cycle.good_unboxed}</Text><Text style={styles.balanceLabel}>Годные</Text></View>
+                          <View style={styles.balanceCell}><Text style={styles.balanceValue}>{cycle.rework}</Text><Text style={styles.balanceLabel}>Доработка</Text></View>
+                          <View style={styles.balanceCell}><Text style={styles.balanceValue}>{cycle.isolator}</Text><Text style={styles.balanceLabel}>Изолятор</Text></View>
+                        </View>
+                        {String(cycle.responsible_employee_id) === String(employee.id) && employee.role === 'cnc_operator' && (
+                          <View style={styles.outputForm}>
+                            <Text style={styles.fieldLabel}>Добавить выпуск, шт.</Text>
+                            <TextInput value={outputCycleId === String(cycle.id) ? outputQuantity : ''} onFocus={() => setOutputCycleId(String(cycle.id))} onChangeText={(v) => { setOutputCycleId(String(cycle.id)); setOutputQuantity(v.replace(/[^0-9]/g, '')); }} keyboardType="number-pad" placeholder="Количество деталей" placeholderTextColor="#718096" style={styles.input} editable={!productionSaving} />
+                            <Pressable onPress={() => { setOutputCycleId(String(cycle.id)); recordProductionOutput(); }} disabled={productionSaving} style={styles.smallActionButton}><Text style={styles.smallActionText}>Сохранить выпуск</Text></Pressable>
+                          </View>
+                        )}
+                      </View>
+                    ))}
+                    {productionWorkspace && productionWorkspace.cycles.length === 0 && <Text style={styles.productionMuted}>Активных циклов пока нет</Text>}
+                  </View>
+                </View>
+              ) : (
+                              <View style={styles.comingSoon}>
                 <Text style={styles.comingSoonLabel}>СЛЕДУЮЩИЙ ЭТАП РАЗРАБОТКИ</Text>
                 <Text style={styles.comingSoonTitle}>Рабочий модуль</Text>
                 <Text style={styles.comingSoonText}>Здесь будут реальные операции, связанные с базой данных и правами вашей роли. Сейчас мы создаём основу интерфейса и авторизации.</Text>
               </View>
+              )}
             </View>
           )}
           <Text style={styles.versionText}>MIC 2.0 · Рабочая версия интерфейса</Text>
@@ -394,6 +549,35 @@ const styles = StyleSheet.create({
   infoTextWrap: { flex: 1 },
   infoTitle: { color: '#C4F4E9', fontSize: 13, fontWeight: '800' },
   infoText: { color: '#91B8B0', fontSize: 11, lineHeight: 17, marginTop: 5 },
+  productionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  productionTitle: { color: '#F1F5F9', fontSize: 19, fontWeight: '900' },
+  productionHint: { color: '#8FA1B5', fontSize: 11, marginTop: 4 },
+  refreshButton: { borderWidth: 1, borderColor: '#30445A', borderRadius: 9, paddingHorizontal: 12, paddingVertical: 8 },
+  refreshText: { color: '#67D5C2', fontSize: 11, fontWeight: '800' },
+  productionCard: { backgroundColor: '#111E2D', borderColor: '#24374A', borderWidth: 1, borderRadius: 17, padding: 16, marginTop: 13 },
+  productionCardTitle: { color: '#F1F5F9', fontSize: 16, fontWeight: '900', marginBottom: 6 },
+  productionMuted: { color: '#8FA1B5', fontSize: 11, lineHeight: 17, marginTop: 7 },
+  choiceWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 },
+  choiceChip: { borderWidth: 1, borderColor: '#30445A', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#0A1522' },
+  choiceChipActive: { borderColor: '#67D5C2', backgroundColor: '#12302F' },
+  choiceText: { color: '#B9C6D5', fontSize: 12, fontWeight: '700' },
+  choiceTextActive: { color: '#C4F4E9' },
+  productChoice: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#30445A', backgroundColor: '#0A1522', borderRadius: 12, padding: 12, marginTop: 8 },
+  productChoiceActive: { borderColor: '#67D5C2', backgroundColor: '#12302F' },
+  productChoiceName: { color: '#F1F5F9', fontSize: 13, fontWeight: '800' },
+  productChoiceMeta: { color: '#8FA1B5', fontSize: 10, lineHeight: 16, marginTop: 4 },
+  choiceTick: { color: '#67D5C2', fontSize: 19, marginLeft: 10 },
+  cycleCard: { borderTopWidth: 1, borderTopColor: '#24374A', paddingTop: 13, marginTop: 12 },
+  cycleTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  cycleName: { color: '#F1F5F9', fontSize: 13, fontWeight: '800' },
+  cycleStatus: { color: '#67D5C2', fontSize: 9, fontWeight: '900', letterSpacing: 1 },
+  balanceGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  balanceCell: { minWidth: '22%', flexGrow: 1, backgroundColor: '#0A1522', borderRadius: 10, padding: 9 },
+  balanceValue: { color: '#F1F5F9', fontSize: 19, fontWeight: '900' },
+  balanceLabel: { color: '#8FA1B5', fontSize: 9, marginTop: 3 },
+  outputForm: { marginTop: 10, borderTopWidth: 1, borderTopColor: '#24374A', paddingTop: 7 },
+  smallActionButton: { backgroundColor: '#1E6258', borderRadius: 10, paddingVertical: 11, alignItems: 'center', marginTop: 5 },
+  smallActionText: { color: '#D8FFF4', fontSize: 12, fontWeight: '900' },
   modulePage: { minHeight: 430 },
   backButton: { alignSelf: 'flex-start', paddingVertical: 10, paddingRight: 16, marginBottom: 28 },
   backText: { color: '#67D5C2', fontSize: 13, fontWeight: '800' },
