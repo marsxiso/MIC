@@ -21,7 +21,7 @@ CREATE TABLE mic2.bin_transfer_corrections (
   corrected_received_quantity INTEGER NOT NULL CHECK (corrected_received_quantity >= 0),
   corrected_by BIGINT NOT NULL REFERENCES mic2.employees(id) ON DELETE RESTRICT,
   corrected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  reason TEXT NOT NULL CHECK (length(trim(reason)) > 0)
+  correction_reason TEXT NOT NULL CHECK (length(trim(correction_reason)) > 0)
 );
 
 CREATE INDEX bin_transfer_corrections_transfer_idx
@@ -190,7 +190,7 @@ BEGIN
     transfer_id,
     original_outgoing_quantity, original_received_quantity,
     corrected_outgoing_quantity, corrected_received_quantity,
-    corrected_by, reason
+    corrected_by, correction_reason
   )
   VALUES (
     p_transfer_id,
@@ -244,7 +244,7 @@ SELECT
   t.confirmed_at,
   c.corrected_by,
   c.corrected_at,
-  c.reason AS correction_reason
+  c.correction_reason AS correction_reason
 FROM mic2.bin_transfers t
 LEFT JOIN LATERAL (
   SELECT *
