@@ -203,14 +203,15 @@ export default function Mic2App() {
     finally { setProductionSaving(false); }
   }
 
-  async function recordProductionOutput() {
+  async function recordProductionOutput(cycleIdOverride?: string) {
+    const targetCycleId = cycleIdOverride || outputCycleId;
     const quantity = Number(outputQuantity);
-    if (!outputCycleId || !Number.isSafeInteger(quantity) || quantity <= 0 || !token) {
+    if (!targetCycleId || !Number.isSafeInteger(quantity) || quantity <= 0 || !token) {
       setProductionError('Укажите цикл и положительное количество деталей'); return;
     }
     setProductionSaving(true); setProductionError('');
     try {
-      const response = await fetch(`${API_URL}/api/mic2/operator/cycles/${outputCycleId}/output`, {
+      const response = await fetch(`${API_URL}/api/mic2/operator/cycles/${targetCycleId}/output`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ quantity }),
@@ -466,7 +467,7 @@ export default function Mic2App() {
                           <View style={styles.outputForm}>
                             <Text style={styles.fieldLabel}>Добавить выпуск, шт.</Text>
                             <TextInput value={outputCycleId === String(cycle.id) ? outputQuantity : ''} onFocus={() => setOutputCycleId(String(cycle.id))} onChangeText={(v) => { setOutputCycleId(String(cycle.id)); setOutputQuantity(v.replace(/[^0-9]/g, '')); }} keyboardType="number-pad" placeholder="Количество деталей" placeholderTextColor="#718096" style={styles.input} editable={!productionSaving} />
-                            <Pressable onPress={() => { setOutputCycleId(String(cycle.id)); recordProductionOutput(); }} disabled={productionSaving} style={styles.smallActionButton}><Text style={styles.smallActionText}>Сохранить выпуск</Text></Pressable>
+                            <Pressable onPress={() => recordProductionOutput(String(cycle.id))} disabled={productionSaving} style={styles.smallActionButton}><Text style={styles.smallActionText}>Сохранить выпуск</Text></Pressable>
                           </View>
                         )}
                       </View>
