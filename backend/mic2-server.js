@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const express = require('express');
+const crypto = require('crypto');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
@@ -116,6 +117,72 @@ app.get('/api/health', async (_req, res, next) => {
     res.json({ ok: true, service: 'MIC 2.0 API', database: 'connected' });
   } catch (error) {
     next(error);
+  }
+});
+
+
+app.post('/api/setup/administrator', async (req, res, next) => {
+  const bootstrapToken = process.env.MIC2_BOOTSTRAP_TOKEN || '';
+  const suppliedToken = (req.get('authorization') || '').replace(/^Bearer\\s+/i, '');
+
+  if (Buffer.byteLength(bootstrapToken, 'utf8') < 32) {
+    return res.status(404).json({ ok: false, message: 'Маршрут недоступен' });
+  }
+
+  const expected = Buffer.from(bootstrapToken, 'utf8');
+  const supplied = Buffer.from(suppliedToken, 'utf8');
+  if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected, supplied)) {
+    return res.status(401).json({ ok: false, message: 'Недействительный ключ настройки' });
+  }
+
+  const login = typeof req.body?.login === 'string' ? req.body.login.trim() : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  const fullName = typeof req.body?.full_name === 'string' && req.body.full_name.trim()
+    ? req.body.full_name.trim()
+    : 'MIC 2.0 Administrator';
+
+  if (!login || login.length > 100 || password.length < 12 || password.length > 200) {
+    return res.status(400).json({ ok: false, message: 'Укажите логин и пароль длиной от 12 символов' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('mic2-first-administrator'))");
+
+    const existing = await client.query(
+      "SELECT id FROM mic2.employees WHERE role_code = 'administrator' LIMIT 1",
+    );
+    if (existing.rowCount > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, message: 'Администратор уже создан' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const created = await client.query(
+      `INSERT INTO mic2.employees (
+         full_name, department, job_title, role_code, login, password_hash,
+         must_change_password, account_status
+       )
+       VALUES ($1, 'administration', 'Administrator', 'administrator', $2, $3, TRUE, 'active')
+       RETURNING id, login`,
+      [fullName, login, passwordHash],
+    );
+
+    await client.query('COMMIT');
+    return res.status(201).json({
+      ok: true,
+      message: 'Первый администратор MIC 2.0 создан',
+      employee: { id: String(created.rows[0].id), login: created.rows[0].login },
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (error.code === '23505') {
+      return res.status(409).json({ ok: false, message: 'Такой логин уже существует' });
+    }
+    return next(error);
+  } finally {
+    client.release();
   }
 });
 
