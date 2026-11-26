@@ -352,7 +352,7 @@ app.post('/api/production/shift-patterns', authenticate, requirePermission('shif
         VALUES($1,$2,'day',$3,$4,$5)
         ON CONFLICT(employee_id,shift_date,shift_code) DO UPDATE
           SET schedule_pattern_id=EXCLUDED.schedule_pattern_id,notes=EXCLUDED.notes
-          WHERE mic2.shift_assignments.attendance_status='pending'
+          WHERE attendance_status='pending'
         RETURNING id
       `,[employeeId,date,req.employee.id,'Автоматически по графику '+(patternCode==='3x3'?'3/3':'5/2'),pattern.id]);
       inserted+=result.rowCount;
