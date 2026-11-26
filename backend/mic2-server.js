@@ -292,7 +292,7 @@ app.post('/api/production/shift-patterns', authenticate, requirePermission('shif
   const employeeId=Number(b.employee_id);
   const patternCode=typeof b.pattern_code==='string'?b.pattern_code:'';
   const startDate=typeof b.start_date==='string'?b.start_date:'';
-  if(!Number.isSafeInteger(employeeId)||employeeId<1||!['3x3','5x2'].includes(patternCode)||!/^\\d{4}-\\d{2}-\\d{2}$/.test(startDate)||Number.isNaN(Date.parse(startDate+'T00:00:00Z'))||new Date(startDate+'T00:00:00Z').toISOString().slice(0,10)!==startDate){
+  if(!Number.isSafeInteger(employeeId)||employeeId<1||!['3x3','5x2'].includes(patternCode)||!/^\d{4}-\d{2}-\d{2}$/.test(startDate)||Number.isNaN(Date.parse(startDate+'T00:00:00Z'))||new Date(startDate+'T00:00:00Z').toISOString().slice(0,10)!==startDate){
     return res.status(400).json({ok:false,message:'Укажите контролёра, график 3/3 или 5/2 и дату начала'});
   }
   const client=await pool.connect();
