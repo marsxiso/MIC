@@ -357,7 +357,7 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
  const c=await pool.connect();
  try{
   await c.query('BEGIN');
-  const cycle=await c.query("SELECT id,card_id FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' FOR UPDATE",[cycleId]);
+  const cycle=await c.query("SELECT id,card_id,(SELECT COALESCE(SUM(quantity),0)::int FROM mic2.production_output_entries WHERE cycle_id=mic2.production_cycles.id) AS output_quantity FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' FOR UPDATE",[cycleId]);
   if(!cycle.rowCount)throw Object.assign(new Error('Активный производственный цикл не найден'),{status:404});
   const cardId=cycle.rows[0].card_id;
   const valid=cardId?await c.query('SELECT id FROM mic2.measurement_parameters WHERE card_id=$1',[cardId]):{rows:[]};
