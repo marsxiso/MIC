@@ -229,6 +229,81 @@ app.get('/api/cycles', authenticate, async (_req,res,next)=>{
   try { const r=await pool.query("SELECT c.id,c.bin_id,c.cycle_no,c.cycle_status,c.started_at,c.ended_at,c.product_name_snapshot,c.product_code_snapshot,c.setup_code_snapshot,e.full_name AS responsible_name,COALESCE(SUM(CASE WHEN b.bucket NOT IN ('rework_external','isolator_external','packed','scrapped') THEN b.quantity ELSE 0 END),0)::int AS physical_quantity,COALESCE(SUM(CASE WHEN b.bucket='production_pending_qc' THEN b.quantity ELSE 0 END),0)::int AS pending_qc FROM mic2.production_cycles c JOIN mic2.employees e ON e.id=c.responsible_employee_id LEFT JOIN mic2.v_cycle_quantity_balances b ON b.cycle_id=c.id GROUP BY c.id,e.full_name ORDER BY c.started_at DESC LIMIT 300");res.json({ok:true,cycles:r.rows}); } catch(e){next(e);}
 });
 
+
+app.get('/api/qc/pending', authenticate, requireRoles('administrator','qc_controller','qc_manager'), async (_req,res,next)=>{
+  try {
+    const r=await pool.query(`
+      SELECT c.id AS cycle_id,c.bin_id,c.cycle_no,c.product_name_snapshot,c.product_code_snapshot,
+        c.setup_code_snapshot,e.full_name AS responsible_name,
+        COALESCE(q.quantity,0)::int AS pending_quantity,
+        COALESCE(d.quantity,0)::int AS reserved_defect_quantity,
+        GREATEST(COALESCE(q.quantity,0)-COALESCE(d.quantity,0),0)::int AS available_quantity
+      FROM mic2.production_cycles c
+      JOIN mic2.employees e ON e.id=c.responsible_employee_id
+      LEFT JOIN mic2.v_cycle_quantity_balances q ON q.cycle_id=c.id AND q.bucket='production_pending_qc'
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(confirmed_quantity),0)::int AS quantity
+        FROM mic2.defects
+        WHERE cycle_id=c.id AND defect_status IN ('awaiting_decision','active')
+      ) d ON TRUE
+      WHERE c.cycle_status='active'
+        AND COALESCE(q.quantity,0)-COALESCE(d.quantity,0)>0
+      ORDER BY c.started_at,c.id
+    `);
+    res.json({ok:true,items:r.rows});
+  } catch(e){next(e);}
+});
+
+app.post('/api/qc/inspect', authenticate, requireRoles('administrator','qc_controller','qc_manager'), async (req,res,next)=>{
+  const b=req.body||{};
+  const cycleId=Number(b.cycle_id),good=Number(b.good_quantity),defective=Number(b.defect_quantity);
+  const description=typeof b.defect_description==='string'?b.defect_description.trim():'';
+  const comment=typeof b.comment==='string'?b.comment.trim():'';
+  if(!Number.isSafeInteger(cycleId)||cycleId<1||!Number.isSafeInteger(good)||good<0||!Number.isSafeInteger(defective)||defective<0||good+defective<1){
+    return res.status(400).json({ok:false,message:'Укажите цикл и корректное количество годных и дефектных деталей'});
+  }
+  if(defective>0&&!description){
+    return res.status(400).json({ok:false,message:'Опишите обнаруженный дефект'});
+  }
+  const c=await pool.connect();
+  try{
+    await c.query('BEGIN');
+    const cycle=await c.query("SELECT id FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' FOR UPDATE",[cycleId]);
+    if(!cycle.rowCount)throw Object.assign(new Error('Активный производственный цикл не найден'),{status:404});
+    const balances=await c.query(`
+      SELECT
+        COALESCE((SELECT quantity FROM mic2.v_cycle_quantity_balances WHERE cycle_id=$1 AND bucket='production_pending_qc'),0)::int AS pending,
+        COALESCE((SELECT SUM(confirmed_quantity) FROM mic2.defects WHERE cycle_id=$1 AND defect_status IN ('awaiting_decision','active')),0)::int AS reserved
+    `,[cycleId]);
+    const available=Math.max(0,balances.rows[0].pending-balances.rows[0].reserved);
+    if(good+defective>available)throw Object.assign(new Error(`Для контроля доступно только ${available} деталей`),{status:409});
+    const inspection=await c.query(`
+      INSERT INTO mic2.qc_inspections(cycle_id,controller_id,inspection_type,completed_at,comment)
+      VALUES($1,$2,'scheduled_round',now(),$3) RETURNING id
+    `,[cycleId,req.employee.id,comment||null]);
+    let defect=null;
+    if(defective>0){
+      const d=await c.query(`
+        INSERT INTO mic2.defects(cycle_id,confirmed_by,confirmed_quantity,defect_description)
+        VALUES($1,$2,$3,$4) RETURNING id,confirmed_quantity,defect_description,defect_status
+      `,[cycleId,req.employee.id,defective,description]);
+      defect=d.rows[0];
+    }
+    if(good>0){
+      await c.query(`
+        INSERT INTO mic2.cycle_quantity_movements(cycle_id,movement_type,from_bucket,to_bucket,quantity,entered_by,note)
+        VALUES($1,'qc_good','production_pending_qc','good_unboxed',$2,$3,$4)
+      `,[cycleId,good,req.employee.id,comment||'Принято ОТК']);
+    }
+    await c.query('COMMIT');
+    res.status(201).json({ok:true,inspection_id:inspection.rows[0].id,good_quantity:good,defect_quantity:defective,defect});
+  }catch(e){
+    await c.query('ROLLBACK').catch(()=>{});
+    if(e.status)return res.status(e.status).json({ok:false,message:e.message});
+    next(e);
+  }finally{c.release();}
+});
+
 app.post('/api/bins', authenticate, requireRoles('administrator','production_manager'), async (req,res,next)=>{try{const r=await pool.query('INSERT INTO mic2.plastic_bins(created_by) VALUES($1) RETURNING id,bin_status,created_at',[req.employee.id]);res.status(201).json({ok:true,bin:r.rows[0]});}catch(e){next(e);}});
 
 app.post('/api/cycles/:id/output', authenticate, requireRoles('cnc_operator','production_manager','administrator'), async (req,res,next)=>{
