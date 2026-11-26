@@ -239,12 +239,13 @@ app.get('/api/production/shifts', authenticate, requirePermission('shift_schedul
   try {
     const employeeRole=req.employee.role_code==='qc_manager'?'qc_controller':'cnc_operator';
     const r=await pool.query(`
-      SELECT s.id,s.employee_id,e.full_name,e.job_title,s.shift_date,s.shift_code,
+      SELECT s.id,s.employee_id,e.full_name,e.job_title,e.role_code,s.shift_date,s.shift_code,
         s.starts_at,s.ends_at,s.attendance_status,s.notes
       FROM mic2.shift_assignments s
       JOIN mic2.employees e ON e.id=s.employee_id
-      WHERE ($2::boolean OR e.role_code=$1) AND s.shift_date >= CURRENT_DATE - INTERVAL '7 days'
-        AND s.shift_date < CURRENT_DATE + INTERVAL '45 days'
+      WHERE ($2::boolean OR e.role_code=$1)
+        AND s.shift_date >= CURRENT_DATE - INTERVAL '365 days'
+        AND s.shift_date < CURRENT_DATE + INTERVAL '366 days'
       ORDER BY s.shift_date,s.shift_code,e.full_name
     `,[employeeRole,req.employee.role_code==='administrator']);
     res.json({ok:true,shifts:r.rows});
@@ -257,12 +258,16 @@ app.post('/api/production/shifts', authenticate, requirePermission('shift_schedu
   const shiftDate=typeof b.shift_date==='string'?b.shift_date:'';
   const shiftCode=typeof b.shift_code==='string'?b.shift_code.trim():'';
   const allowedRole=req.employee.role_code==='qc_manager'?'qc_controller':'cnc_operator';
-  if(!Number.isSafeInteger(employeeId)||employeeId<1||!/^\\d{4}-\\d{2}-\\d{2}$/.test(shiftDate)||!shiftCode){
-    return res.status(400).json({ok:false,message:'Укажите сотрудника, дату и смену'});
+  if(!Number.isSafeInteger(employeeId)||employeeId<1||!/^\\d{4}-\\d{2}-\\d{2}$/.test(shiftDate)||!['day','night'].includes(shiftCode)){
+    return res.status(400).json({ok:false,message:'Укажите сотрудника, дату и дневную или ночную смену'});
   }
   try{
-    const e=req.employee.role_code==='administrator'?await pool.query("SELECT id FROM mic2.employees WHERE id=$1 AND role_code IN ('cnc_operator','qc_controller') AND account_status='active' AND terminated_at IS NULL",[employeeId]):await pool.query("SELECT id FROM mic2.employees WHERE id=$1 AND role_code=$2 AND account_status='active' AND terminated_at IS NULL",[employeeId,allowedRole]);
-    if(!e.rowCount)return res.status(400).json({ok:false,message:'Нельзя назначить сотрудника другой специализации'});
+    const e=await pool.query("SELECT id,role_code FROM mic2.employees WHERE id=$1 AND role_code IN ('cnc_operator','qc_controller') AND account_status='active' AND terminated_at IS NULL",[employeeId]);
+    if(!e.rowCount)return res.status(400).json({ok:false,message:'Нельзя назначить неактивного сотрудника или сотрудника другой специализации'});
+    const targetRole=e.rows[0].role_code;
+    if(req.employee.role_code==='qc_manager'&&targetRole!=='qc_controller')return res.status(403).json({ok:false,message:'Начальник ОТК может назначать только контролёров ОТК'});
+    if(req.employee.role_code==='production_manager'&&targetRole!=='cnc_operator')return res.status(403).json({ok:false,message:'Начальник производства может назначать только операторов ЧПУ'});
+    if(targetRole==='qc_controller'&&shiftCode!=='day')return res.status(400).json({ok:false,message:'Для контролёров ОТК предусмотрены только дневные смены'});
     const r=await pool.query(`
       INSERT INTO mic2.shift_assignments(employee_id,shift_date,shift_code,starts_at,ends_at,assigned_by,notes)
       VALUES($1,$2,$3,$4,$5,$6,$7)
