@@ -431,7 +431,7 @@ app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), asy
     const r=await pool.query(`
       SELECT c.id AS cycle_id,c.bin_id,c.cycle_no,c.product_name_snapshot,c.product_code_snapshot,
         c.setup_code_snapshot,e.full_name AS responsible_name,
-        COALESCE(c.card_id,active_card.id) AS card_id,
+        c.card_id AS card_id,
         COALESCE(card_params.parameters,'[]'::json) AS measurement_parameters,
         COALESCE(q.quantity,0)::int AS pending_quantity,
         COALESCE(d.quantity,0)::int AS reserved_defect_quantity,
@@ -440,16 +440,11 @@ app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), asy
       JOIN mic2.employees e ON e.id=c.responsible_employee_id
       LEFT JOIN mic2.v_cycle_quantity_balances q ON q.cycle_id=c.id AND q.bucket='production_pending_qc'
       LEFT JOIN LATERAL (
-        SELECT mc.id FROM mic2.measurement_cards mc
-        WHERE mc.setup_id=c.setup_id AND mc.review_status='active'
-        ORDER BY mc.version_no DESC LIMIT 1
-      ) active_card ON TRUE
-      LEFT JOIN LATERAL (
         SELECT json_agg(json_build_object('id',mp.id,'parameter_name',mp.parameter_name,
           'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,'unit',mp.unit,
           'instruction',mp.instruction) ORDER BY mp.sort_order) AS parameters
         FROM mic2.measurement_parameters mp
-        WHERE mp.card_id=COALESCE(c.card_id,active_card.id)
+        WHERE mp.card_id=c.card_id
       ) card_params ON TRUE
       LEFT JOIN LATERAL (
         SELECT COALESCE(SUM(confirmed_quantity),0)::int AS quantity
@@ -478,14 +473,14 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
   const c=await pool.connect();
   try{
     await c.query('BEGIN');
-    const cycle=await c.query("SELECT id,COALESCE(card_id,(SELECT mc.id FROM mic2.measurement_cards mc WHERE mc.setup_id=production_cycles.setup_id AND mc.review_status='active' ORDER BY mc.version_no DESC LIMIT 1)) AS card_id FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' FOR UPDATE",[cycleId]);
+    const cycle=await c.query("SELECT id,card_id FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' FOR UPDATE",[cycleId]);
     if(!cycle.rowCount)throw Object.assign(new Error('Активный производственный цикл не найден'),{status:404});
     const measurementRows=Array.isArray(b.measurements)?b.measurements:[];
     let validParameters=[];
     if(cycle.rows[0].card_id){
       const cardParams=await c.query('SELECT id FROM mic2.measurement_parameters WHERE card_id=$1',[cycle.rows[0].card_id]);
       validParameters=cardParams.rows.map(x=>String(x.id));
-      if(measurementRows.length!==validParameters.length||measurementRows.some(x=>!validParameters.includes(String(x.parameter_id))||typeof x.measured_value!=='string'||!x.measured_value.trim())){
+      if(measurementRows.length!==validParameters.length||new Set(measurementRows.map(x=>String(x.parameter_id))).size!==validParameters.length||measurementRows.some(x=>!validParameters.includes(String(x.parameter_id))||typeof x.measured_value!=='string'||!x.measured_value.trim())){
         throw Object.assign(new Error('Заполните результаты по всем параметрам действующей карты измерений'),{status:400});
       }
     } else if(measurementRows.length){
