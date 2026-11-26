@@ -179,8 +179,8 @@ const ROLE_ACCESS = Object.freeze({
   administrator: ['accounts:create', 'roles:read'],
   production_manager: ['dashboard:read', 'products:read', 'products:write', 'bins:read', 'bins:write', 'cycles:read', 'cycles:write', 'operators:assign', 'shift_schedule:read', 'shift_schedule:write'],
   cnc_operator: ['cycles:own:read', 'output:own:write'],
-  qc_controller: ['qc:queue:read', 'qc:inspect:write', 'qc:own:read'],
-  qc_manager: ['dashboard:read', 'qc:queue:read', 'qc:inspect:write', 'qc:all:read', 'shift_schedule:read', 'shift_schedule:write'],
+  qc_controller: ['qc:queue:read', 'qc:inspect:write', 'qc:own:read', 'qc:cards:read'],
+  qc_manager: ['dashboard:read', 'qc:queue:read', 'qc:inspect:write', 'qc:all:read', 'qc:cards:read', 'qc:cards:write', 'shift_schedule:read', 'shift_schedule:write'],
   technical_director: ['dashboard:read', 'products:read', 'reports:read'],
 });
 function requireRoles(...roles) {
@@ -291,7 +291,7 @@ app.post('/api/products', authenticate, requirePermission('products:write'), asy
 
 app.post('/api/cycles', authenticate, requirePermission('cycles:write'), async (req,res)=>{
   const b=req.body||{};const binId=Number(b.bin_id),productId=Number(b.product_id),setupId=Number(b.setup_id),operatorId=Number(b.operator_id);if(![binId,productId,setupId,operatorId].every(Number.isSafeInteger))return res.status(400).json({ok:false,message:'Выберите контейнер, изделие, наладку и оператора'});
-  const c=await pool.connect();try{await c.query('BEGIN');const bin=await c.query("SELECT id FROM mic2.plastic_bins WHERE id=$1 AND bin_status='free' FOR UPDATE",[binId]);if(!bin.rowCount)throw Object.assign(Error('Контейнер не свободен'),{status:409});const p=await c.query('SELECT * FROM mic2.products WHERE id=$1 AND is_active',[productId]);if(!p.rowCount)throw Object.assign(Error('Изделие не найдено'),{status:404});const s=await c.query('SELECT * FROM mic2.product_setups WHERE id=$1 AND product_id=$2 AND is_active',[setupId,productId]);if(!s.rowCount)throw Object.assign(Error('Наладка не соответствует изделию'),{status:400});const op=await c.query("SELECT id FROM mic2.employees WHERE id=$1 AND role_code='cnc_operator' AND account_status='active' AND terminated_at IS NULL",[operatorId]);if(!op.rowCount)throw Object.assign(Error('Выбранный сотрудник не является активным оператором ЧПУ'),{status:400});const n=await c.query('SELECT COALESCE(MAX(cycle_no),0)+1 AS n FROM mic2.production_cycles WHERE bin_id=$1',[binId]);const cy=await c.query('INSERT INTO mic2.production_cycles(bin_id,cycle_no,product_id,setup_id,started_by,responsible_employee_id,product_code_snapshot,product_name_snapshot,setup_code_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *',[binId,n.rows[0].n,productId,setupId,req.employee.id,operatorId,p.rows[0].product_code,p.rows[0].product_name,s.rows[0].setup_code]);await c.query("UPDATE mic2.plastic_bins SET bin_status='occupied' WHERE id=$1",[binId]);await c.query('INSERT INTO mic2.cycle_operator_periods(cycle_id,operator_id,approved_by) VALUES($1,$2,$3)',[cy.rows[0].id,operatorId,req.employee.id]);await c.query('COMMIT');res.status(201).json({ok:true,cycle:cy.rows[0]});
+  const c=await pool.connect();try{await c.query('BEGIN');const bin=await c.query("SELECT id FROM mic2.plastic_bins WHERE id=$1 AND bin_status='free' FOR UPDATE",[binId]);if(!bin.rowCount)throw Object.assign(Error('Контейнер не свободен'),{status:409});const p=await c.query('SELECT * FROM mic2.products WHERE id=$1 AND is_active',[productId]);if(!p.rowCount)throw Object.assign(Error('Изделие не найдено'),{status:404});const s=await c.query('SELECT * FROM mic2.product_setups WHERE id=$1 AND product_id=$2 AND is_active',[setupId,productId]);if(!s.rowCount)throw Object.assign(Error('Наладка не соответствует изделию'),{status:400});const op=await c.query("SELECT id FROM mic2.employees WHERE id=$1 AND role_code='cnc_operator' AND account_status='active' AND terminated_at IS NULL",[operatorId]);if(!op.rowCount)throw Object.assign(Error('Выбранный сотрудник не является активным оператором ЧПУ'),{status:400});const n=await c.query('SELECT COALESCE(MAX(cycle_no),0)+1 AS n FROM mic2.production_cycles WHERE bin_id=$1',[binId]);const activeCard=await c.query("SELECT id FROM mic2.measurement_cards WHERE setup_id=$1 AND review_status='active' ORDER BY version_no DESC LIMIT 1",[setupId]);const cy=await c.query('INSERT INTO mic2.production_cycles(bin_id,cycle_no,product_id,setup_id,card_id,started_by,responsible_employee_id,product_code_snapshot,product_name_snapshot,setup_code_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *',[binId,n.rows[0].n,productId,setupId,activeCard.rows[0]?.id||null,req.employee.id,operatorId,p.rows[0].product_code,p.rows[0].product_name,s.rows[0].setup_code]);await c.query("UPDATE mic2.plastic_bins SET bin_status='occupied' WHERE id=$1",[binId]);await c.query('INSERT INTO mic2.cycle_operator_periods(cycle_id,operator_id,approved_by) VALUES($1,$2,$3)',[cy.rows[0].id,operatorId,req.employee.id]);await c.query('COMMIT');res.status(201).json({ok:true,cycle:cy.rows[0]});
   }catch(e){await c.query('ROLLBACK').catch(()=>{});res.status(e.status||500).json({ok:false,message:e.status?e.message:(e.code==='23505'?'У контейнера уже есть активный цикл':'Не удалось открыть цикл')});}finally{c.release();}
 });
 
@@ -303,6 +303,128 @@ app.get('/api/cycles', authenticate, requirePermission('cycles:read','cycles:own
   try { const operatorFilter=req.employee.role_code==='cnc_operator'; const r=await pool.query("SELECT c.id,c.bin_id,c.cycle_no,c.cycle_status,c.started_at,c.ended_at,c.product_name_snapshot,c.product_code_snapshot,c.setup_code_snapshot,e.full_name AS responsible_name,COALESCE(SUM(CASE WHEN b.bucket NOT IN ('rework_external','isolator_external','packed','scrapped') THEN b.quantity ELSE 0 END),0)::int AS physical_quantity,COALESCE(SUM(CASE WHEN b.bucket='production_pending_qc' THEN b.quantity ELSE 0 END),0)::int AS pending_qc FROM mic2.production_cycles c JOIN mic2.employees e ON e.id=c.responsible_employee_id LEFT JOIN mic2.v_cycle_quantity_balances b ON b.cycle_id=c.id GROUP BY c.id,e.full_name HAVING (NOT $1 OR c.responsible_employee_id=$2) ORDER BY c.started_at DESC LIMIT 300",[operatorFilter,req.employee.id]);res.json({ok:true,cycles:r.rows}); } catch(e){next(e);}
 });
 
+
+
+app.get('/api/qc/cards', authenticate, requirePermission('qc:cards:read'), async (req,res,next)=>{
+  try{
+    const setupId=req.query.setup_id?Number(req.query.setup_id):null;
+    if(setupId!==null&&!Number.isSafeInteger(setupId))return res.status(400).json({ok:false,message:'Некорректная наладка'});
+    const cards=await pool.query(`
+      SELECT mc.id,mc.setup_id,mc.version_no,mc.source_type,mc.source_file_uri,
+        mc.review_status,mc.created_at,mc.checked_at,creator.full_name AS created_by_name,
+        checker.full_name AS checked_by_name,
+        COALESCE(json_agg(json_build_object(
+          'id',mp.id,'sort_order',mp.sort_order,'parameter_name',mp.parameter_name,
+          'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,
+          'unit',mp.unit,'instruction',mp.instruction
+        ) ORDER BY mp.sort_order) FILTER(WHERE mp.id IS NOT NULL),'[]') AS parameters
+      FROM mic2.measurement_cards mc
+      LEFT JOIN mic2.measurement_parameters mp ON mp.card_id=mc.id
+      LEFT JOIN mic2.employees creator ON creator.id=mc.created_by
+      LEFT JOIN mic2.employees checker ON checker.id=mc.checked_by
+      WHERE ($1::bigint IS NULL OR mc.setup_id=$1)
+      GROUP BY mc.id,creator.full_name,checker.full_name
+      ORDER BY mc.setup_id,mc.version_no DESC
+    `,[setupId]);
+    res.json({ok:true,cards:cards.rows});
+  }catch(e){next(e);}
+});
+
+app.post('/api/qc/cards', authenticate, requirePermission('qc:cards:write'), async (req,res,next)=>{
+  const b=req.body||{},setupId=Number(b.setup_id);
+  const parameters=Array.isArray(b.parameters)?b.parameters:[];
+  if(!Number.isSafeInteger(setupId)||setupId<1||!parameters.length||parameters.length>100||
+    parameters.some(p=>!p||typeof p.parameter_name!=='string'||!p.parameter_name.trim())){
+    return res.status(400).json({ok:false,message:'Выберите наладку и добавьте хотя бы один параметр измерения'});
+  }
+  const c=await pool.connect();
+  try{
+    await c.query('BEGIN');
+    const setup=await c.query('SELECT id FROM mic2.product_setups WHERE id=$1 AND is_active FOR UPDATE',[setupId]);
+    if(!setup.rowCount)throw Object.assign(new Error('Активная наладка не найдена'),{status:404});
+    const version=await c.query('SELECT COALESCE(MAX(version_no),0)+1 AS n FROM mic2.measurement_cards WHERE setup_id=$1',[setupId]);
+    const card=await c.query(`
+      INSERT INTO mic2.measurement_cards(setup_id,version_no,source_type,review_status,created_by)
+      VALUES($1,$2,'manual','draft',$3) RETURNING id,setup_id,version_no,review_status
+    `,[setupId,version.rows[0].n,req.employee.id]);
+    for(let i=0;i<parameters.length;i++){
+      const p=parameters[i];
+      await c.query(`
+        INSERT INTO mic2.measurement_parameters(card_id,sort_order,parameter_name,nominal_value,tolerance_text,unit,instruction)
+        VALUES($1,$2,$3,$4,$5,$6,$7)
+      `,[card.rows[0].id,i+1,p.parameter_name.trim(),p.nominal_value||null,p.tolerance_text||null,p.unit||null,p.instruction||null]);
+    }
+    await c.query('COMMIT');
+    res.status(201).json({ok:true,card:card.rows[0]});
+  }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.status)return res.status(e.status).json({ok:false,message:e.message});next(e);}
+  finally{c.release();}
+});
+
+app.post('/api/qc/cards/:id/activate', authenticate, requirePermission('qc:cards:write'), async (req,res,next)=>{
+  const cardId=Number(req.params.id);
+  if(!Number.isSafeInteger(cardId)||cardId<1)return res.status(400).json({ok:false,message:'Некорректная карта измерений'});
+  const c=await pool.connect();
+  try{
+    await c.query('BEGIN');
+    const card=await c.query('SELECT id,setup_id,review_status FROM mic2.measurement_cards WHERE id=$1 FOR UPDATE',[cardId]);
+    if(!card.rowCount)throw Object.assign(new Error('Карта измерений не найдена'),{status:404});
+    if(!['draft','checked'].includes(card.rows[0].review_status))throw Object.assign(new Error('Эту карту нельзя активировать'),{status:409});
+    const count=await c.query('SELECT COUNT(*)::int AS n FROM mic2.measurement_parameters WHERE card_id=$1',[cardId]);
+    if(count.rows[0].n<1)throw Object.assign(new Error('В карте нет параметров измерения'),{status:409});
+    await c.query("UPDATE mic2.measurement_cards SET review_status='archived' WHERE setup_id=$1 AND review_status='active'",[card.rows[0].setup_id]);
+    await c.query("UPDATE mic2.measurement_cards SET review_status='active',checked_by=$2,checked_at=now() WHERE id=$1",[cardId,req.employee.id]);
+    await c.query('COMMIT');
+    res.json({ok:true,message:'Карта измерений активирована'});
+  }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.status)return res.status(e.status).json({ok:false,message:e.message});next(e);}
+  finally{c.release();}
+});
+
+app.get('/api/qc/history', authenticate, requirePermission('qc:own:read','qc:all:read'), async (req,res,next)=>{
+  try{
+    const ownOnly=req.employee.role_code==='qc_controller';
+    const r=await pool.query(`
+      SELECT i.id,i.cycle_id,i.inspection_type,i.started_at,i.completed_at,i.comment,
+        e.full_name AS controller_name,c.bin_id,c.product_name_snapshot,c.setup_code_snapshot,
+        mc.version_no AS card_version,COUNT(mr.id)::int AS measured_parameters
+      FROM mic2.qc_inspections i
+      JOIN mic2.employees e ON e.id=i.controller_id
+      JOIN mic2.production_cycles c ON c.id=i.cycle_id
+      LEFT JOIN mic2.measurement_cards mc ON mc.id=i.card_id
+      LEFT JOIN mic2.qc_measurement_results mr ON mr.inspection_id=i.id
+      WHERE (NOT $1 OR i.controller_id=$2)
+      GROUP BY i.id,e.full_name,c.id,mc.version_no
+      ORDER BY i.started_at DESC LIMIT 300
+    `,[ownOnly,req.employee.id]);
+    res.json({ok:true,inspections:r.rows});
+  }catch(e){next(e);}
+});
+
+app.get('/api/qc/history/:id', authenticate, requirePermission('qc:own:read','qc:all:read'), async (req,res,next)=>{
+  const id=Number(req.params.id);
+  try{
+    const ownOnly=req.employee.role_code==='qc_controller';
+    const r=await pool.query(`
+      SELECT i.id,i.cycle_id,i.inspection_type,i.started_at,i.completed_at,i.comment,
+        e.full_name AS controller_name,c.bin_id,c.product_name_snapshot,c.setup_code_snapshot,
+        mc.version_no AS card_version,
+        COALESCE(json_agg(json_build_object(
+          'parameter_name',mp.parameter_name,'nominal_value',mp.nominal_value,
+          'tolerance_text',mp.tolerance_text,'unit',mp.unit,
+          'measured_value',mr.measured_value,'comment',mr.comment
+        ) ORDER BY mp.sort_order) FILTER(WHERE mr.id IS NOT NULL),'[]') AS measurements
+      FROM mic2.qc_inspections i
+      JOIN mic2.employees e ON e.id=i.controller_id
+      JOIN mic2.production_cycles c ON c.id=i.cycle_id
+      LEFT JOIN mic2.measurement_cards mc ON mc.id=i.card_id
+      LEFT JOIN mic2.qc_measurement_results mr ON mr.inspection_id=i.id
+      LEFT JOIN mic2.measurement_parameters mp ON mp.id=mr.parameter_id
+      WHERE i.id=$1 AND (NOT $2 OR i.controller_id=$3)
+      GROUP BY i.id,e.full_name,c.id,mc.version_no
+    `,[id,ownOnly,req.employee.id]);
+    if(!r.rowCount)return res.status(404).json({ok:false,message:'Проверка не найдена'});
+    res.json({ok:true,inspection:r.rows[0]});
+  }catch(e){next(e);}
+});
 
 app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), async (_req,res,next)=>{
   try {
