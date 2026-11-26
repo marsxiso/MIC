@@ -40,3 +40,8 @@ button{cursor:pointer}button:disabled{opacity:.55;cursor:wait}.tableActions{disp
 .formHint{padding:10px 12px;margin:10px 0;background:#20363d;border:1px solid #36525a;border-radius:8px;color:#b6c9cc;font-size:11px;line-height:1.5}
 
 .modalError{margin-top:12px;padding:10px 12px;border:1px solid #9a5555;border-radius:8px;background:#3a2529;color:#ffdada;font-size:12px;line-height:1.4}
+
+/* QC team calendar: self-service attendance controls */
+.attendanceOpen{display:inline-flex;margin-top:5px;padding:4px 7px;font-size:11px;min-height:24px}
+.modalFoot{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line,#2c4148)}
+.shiftEvent .attendanceOpen{white-space:nowrap}
