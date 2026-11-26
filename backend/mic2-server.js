@@ -431,7 +431,7 @@ app.get('/api/admin/accounts', authenticate, requirePermission('accounts:create'
 });
 app.post('/api/admin/accounts/:id/status', authenticate, requirePermission('accounts:create'), async(req,res,next)=>{
  const id=Number(req.params.id),status=String(req.body?.account_status||'');
- if(!Number.isSafeInteger(id)||id<1||!['active','suspended'].includes(status))return res.status(400).json({ok:false,message:'Укажите корректный статус учётной записи'});
+ if(!Number.isSafeInteger(id)||id<1||!['active','blocked'].includes(status))return res.status(400).json({ok:false,message:'Укажите корректный статус учётной записи'});
  if(id===req.employee.id&&status!=='active')return res.status(409).json({ok:false,message:'Нельзя заблокировать собственную учётную запись'});
  try{const r=await pool.query('UPDATE mic2.employees SET account_status=$2 WHERE id=$1 RETURNING id,full_name,account_status',[id,status]);if(!r.rowCount)return res.status(404).json({ok:false,message:'Сотрудник не найден'});await pool.query(`INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,after_data) VALUES($1,$2,'account_status_changed','employee',$3,$4::jsonb)`,[req.employee.id,req.employee.role_code,id,JSON.stringify(r.rows[0])]);res.json({ok:true,employee:r.rows[0]});}
  catch(e){next(e);}
