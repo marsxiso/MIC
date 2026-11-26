@@ -607,10 +607,25 @@ app.post('/api/admin/accounts/:id/status', authenticate, requirePermission('acco
  catch(e){next(e);}
 });
 app.post('/api/admin/accounts', authenticate, requirePermission('accounts:create'), async (req,res,next)=>{
-  try { const b=req.body||{}; if(!b.full_name?.trim()||!b.job_title?.trim()||!b.login?.trim()||!b.password||b.password.length<10)return res.status(400).json({ok:false,message:'Заполните ФИО, должность, логин и пароль от 10 символов'});
-    if(!['production','qc','management','administration'].includes(b.department))return res.status(400).json({ok:false,message:'Некорректное подразделение'});
-    const role=await pool.query('SELECT code FROM mic2.roles WHERE code=$1',[b.role_code]);if(!role.rowCount)return res.status(400).json({ok:false,message:'Неизвестная роль'});
-    const hash=await bcrypt.hash(b.password,12);const r=await pool.query('INSERT INTO mic2.employees(full_name,department,job_title,role_code,login,password_hash,must_change_password) VALUES($1,$2,$3,$4,$5,$6,TRUE) RETURNING id,full_name,department,job_title,role_code,login',[b.full_name.trim(),b.department,b.job_title.trim(),b.role_code,b.login.trim(),hash]);res.status(201).json({ok:true,employee:r.rows[0]});
+  try {
+    const b=req.body||{};
+    const positions={
+      cnc_operator:{department:'production',job_title:'Оператор ЧПУ'},
+      qc_controller:{department:'qc',job_title:'Контролёр ОТК'},
+      production_manager:{department:'production',job_title:'Начальник производства'},
+      qc_manager:{department:'qc',job_title:'Начальник ОТК'},
+      technical_director:{department:'management',job_title:'Технический директор'},
+      administrator:{department:'administration',job_title:'Администратор'}
+    };
+    const position=positions[b.role_code];
+    if(!b.full_name?.trim()||!position||!b.login?.trim()||!b.password||b.password.length<10)
+      return res.status(400).json({ok:false,message:'Укажите ФИО, должность, логин и пароль не короче 10 символов'});
+    const hash=await bcrypt.hash(b.password,12);
+    const r=await pool.query(
+      'INSERT INTO mic2.employees(full_name,department,job_title,role_code,login,password_hash,must_change_password) VALUES($1,$2,$3,$4,$5,$6,TRUE) RETURNING id,full_name,department,job_title,role_code,login',
+      [b.full_name.trim(),position.department,position.job_title,b.role_code,b.login.trim(),hash]
+    );
+    res.status(201).json({ok:true,employee:r.rows[0]});
   }catch(e){if(e.code==='23505')return res.status(409).json({ok:false,message:'Такой логин уже существует'});next(e);}
 });
 
