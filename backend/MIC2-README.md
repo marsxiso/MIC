@@ -5,45 +5,42 @@ This backend is deliberately separate from the legacy `server.js`. It uses only 
 
 ## Environment
 
-Copy `.env.mic2.example` to a private `.env` (do not commit it) and set:
+Set these variables in the MIC 2.0 Render service:
 
-- `DATABASE_URL`: connection string for the dedicated MIC 2.0 database.
-- `JWT_SECRET`: random secret with at least 32 bytes.
+- `DATABASE_URL`: the **Internal Database URL** of the dedicated MIC development database.
+- `JWT_SECRET`: a random secret with at least 32 bytes.
+- `JWT_EXPIRES_IN`: optional token lifetime (defaults to `8h`).
 - `CORS_ORIGIN`: exact comma-separated frontend origins.
-- `PORT`: optional HTTP port (defaults to 3001).
 
-The existing backend dependencies already include `pg`, `bcrypt`, `jsonwebtoken`,
-`express`, `cors`, and `dotenv`.
+Do not commit `.env` files or paste database credentials into source code.
 
-## Database
+## Database migrations
 
-Apply migrations `001` through `007` in numeric order to a dedicated MIC 2.0
-database. Migration `007` has been aligned with the correction table and view
-created by migration `005`; it must not be applied to the legacy database.
+The service starts with `node mic2-migrate.js && node mic2-server.js`.
+The migration runner applies SQL files `001` through `007` in order, records
+checksums in `mic2.schema_migrations`, uses a PostgreSQL advisory lock, and
+runs each migration transactionally. Already-applied migrations are skipped;
+a changed migration checksum causes startup to stop rather than silently
+changing an applied schema.
+
+Migration `007` is aligned with the canonical correction table and view from
+migration `005`. The `mic2` schema is separate from legacy `public` tables.
 
 ## Create the first administrator
 
 After migrations have been applied, set `MIC2_ADMIN_LOGIN`,
 `MIC2_ADMIN_PASSWORD` (at least 12 characters), and optionally
-`MIC2_ADMIN_NAME` in the environment. Run once:
+`MIC2_ADMIN_NAME` as temporary environment variables. Run once from the
+backend directory:
 
 ```bash
 node mic2-create-admin.js
 ```
 
-The script stores a bcrypt password hash and refuses to create an account if
-the login already exists. Remove the bootstrap credentials from the environment
-after use.
+The script stores a bcrypt password hash. Remove the bootstrap credentials
+from the environment after use.
 
-## Run
-
-From the `backend` directory:
-
-```bash
-node mic2-server.js
-```
-
-Endpoints:
+## API
 
 - `GET /api/health`
 - `POST /api/auth/login` with JSON `{ "login": "...", "password": "..." }`
