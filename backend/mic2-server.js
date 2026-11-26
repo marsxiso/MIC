@@ -361,6 +361,59 @@ app.post('/api/production/shift-patterns', authenticate, requirePermission('shif
   }finally{client.release();}
 });
 
+app.get('/api/qc/calendar', authenticate, requireRoles('qc_controller'), async(req,res,next)=>{
+ try{
+  const [shifts,patterns]=await Promise.all([
+   pool.query(`
+    SELECT s.id,s.employee_id,e.full_name,e.job_title,e.role_code,
+     to_char(s.shift_date,'YYYY-MM-DD') AS shift_date,s.shift_code,
+     s.starts_at,s.ends_at,s.attendance_status,s.notes,s.attendance_note,
+     (s.employee_id=$1) AS is_own
+    FROM mic2.shift_assignments s
+    JOIN mic2.employees e ON e.id=s.employee_id
+    WHERE e.role_code='qc_controller' AND e.account_status='active' AND e.terminated_at IS NULL
+      AND s.shift_date>=CURRENT_DATE-INTERVAL '365 days'
+      AND s.shift_date<CURRENT_DATE+INTERVAL '366 days'
+    ORDER BY s.shift_date,e.full_name
+   `,[req.employee.id]),
+   pool.query(`
+    SELECT p.id,p.employee_id,e.full_name,p.pattern_code,
+     to_char(p.start_date,'YYYY-MM-DD') AS start_date,
+     to_char(p.end_date,'YYYY-MM-DD') AS end_date
+    FROM mic2.shift_schedule_patterns p
+    JOIN mic2.employees e ON e.id=p.employee_id
+    WHERE p.is_active AND e.role_code='qc_controller'
+      AND e.account_status='active' AND e.terminated_at IS NULL
+    ORDER BY e.full_name
+   `)
+  ]);
+  res.json({ok:true,shifts:shifts.rows,patterns:patterns.rows});
+ }catch(e){next(e);}
+});
+
+app.post('/api/qc/my-shifts/:id/attendance', authenticate, requireRoles('qc_controller'), async(req,res,next)=>{
+ const id=Number(req.params.id),b=req.body||{};
+ const status=typeof b.attendance_status==='string'?b.attendance_status:'';
+ const note=typeof b.attendance_note==='string'?b.attendance_note.trim():'';
+ if(!Number.isSafeInteger(id)||id<1||!['present','absent','left_early'].includes(status))
+  return res.status(400).json({ok:false,message:'Выберите корректный статус явки'});
+ if(note.length>500)return res.status(400).json({ok:false,message:'Комментарий не должен превышать 500 символов'});
+ if(status==='left_early'&&!note)return res.status(400).json({ok:false,message:'Укажите причину раннего ухода'});
+ try{
+  const r=await pool.query(`
+   UPDATE mic2.shift_assignments
+   SET attendance_status=$3,attendance_note=$4,
+    attendance_confirmed_by=$2,attendance_confirmed_at=now()
+   WHERE id=$1 AND employee_id=$2
+    AND shift_date<=CURRENT_DATE
+    AND shift_date>=CURRENT_DATE-INTERVAL '7 days'
+   RETURNING id,attendance_status,attendance_note,attendance_confirmed_at
+  `,[id,req.employee.id,status,note||null]);
+  if(!r.rowCount)return res.status(404).json({ok:false,message:'Смена не найдена, не принадлежит вам или дата смены ещё не наступила'});
+  res.json({ok:true,shift:r.rows[0]});
+ }catch(e){next(e);}
+});
+
 app.get('/api/qc/my-shifts', authenticate, requirePermission('qc:own:shifts'), async(req,res,next)=>{
  try{
   const r=await pool.query(`
