@@ -342,13 +342,13 @@ app.post('/api/production/shift-patterns', authenticate, requirePermission('shif
       if(working)scheduled.push(day.toISOString().slice(0,10));
     }
     const generated=await client.query(`
-      INSERT INTO mic2.shift_assignments
+      INSERT INTO mic2.shift_assignments AS existing
         (employee_id,shift_date,shift_code,assigned_by,notes,schedule_pattern_id)
       SELECT $1,dates.shift_date,'day',$2,$3,$4
       FROM unnest($5::date[]) AS dates(shift_date)
       ON CONFLICT(employee_id,shift_date,shift_code) DO UPDATE
         SET schedule_pattern_id=EXCLUDED.schedule_pattern_id,notes=EXCLUDED.notes
-        WHERE attendance_status='pending'
+        WHERE existing.attendance_status='pending'
       RETURNING id
     `,[employeeId,req.employee.id,'Автоматически по графику '+(patternCode==='3x3'?'3/3':'5/2'),pattern.id,scheduled]);
     const inserted=generated.rowCount;
