@@ -47,3 +47,4 @@ button{cursor:pointer}button:disabled{opacity:.55;cursor:wait}.tableActions{disp
 .shiftEvent .attendanceOpen{white-space:nowrap}
 
 .tile{width:100%;min-height:106px;cursor:pointer;transition:background .15s,border-color .15s,transform .15s}.tile:hover,.tile:focus-visible{background:#223b43;border-color:#78bba9;transform:translateY(-2px);outline:none}.tile:focus-visible{box-shadow:0 0 0 2px #8bd4c0}.tile:active{transform:translateY(0)}
+.metricClickable{cursor:pointer;transition:background .15s,border-color .15s,transform .15s}.metricClickable:hover,.metricClickable:focus-visible{background:#223b43;border-color:#78bba9;transform:translateY(-2px);outline:none}.metricClickable:focus-visible{box-shadow:0 0 0 2px #8bd4c0}.metricClickable:active{transform:translateY(0)}
