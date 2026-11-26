@@ -41,7 +41,7 @@ const allowedOrigins = (process.env.CORS_ORIGIN || '')
 app.disable('x-powered-by');
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
     return callback(new Error('Origin is not allowed by CORS'));
