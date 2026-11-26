@@ -267,7 +267,7 @@ app.post('/api/production/shifts', authenticate, requirePermission('shift_schedu
   const shiftDate=typeof b.shift_date==='string'?b.shift_date:'';
   const shiftCode=typeof b.shift_code==='string'?b.shift_code.trim():'';
   const allowedRole=req.employee.role_code==='qc_manager'?'qc_controller':'cnc_operator';
-  if(!Number.isSafeInteger(employeeId)||employeeId<1||!/^\\d{4}-\\d{2}-\\d{2}$/.test(shiftDate)||!['day','night'].includes(shiftCode)){
+  if(!Number.isSafeInteger(employeeId)||employeeId<1||!/^\d{4}-\d{2}-\d{2}$/.test(shiftDate)||!['day','night'].includes(shiftCode)){
     return res.status(400).json({ok:false,message:'Укажите сотрудника, дату и дневную или ночную смену'});
   }
   try{
@@ -367,7 +367,7 @@ app.get('/api/qc/calendar', authenticate, requireRoles('qc_controller'), async(r
    pool.query(`
     SELECT s.id,s.employee_id,e.full_name,e.job_title,e.role_code,
      to_char(s.shift_date,'YYYY-MM-DD') AS shift_date,s.shift_code,
-     s.starts_at,s.ends_at,s.attendance_status,s.notes,s.attendance_note,
+     s.starts_at,s.ends_at,s.attendance_status,s.actual_start_time,s.actual_end_time,s.notes,s.attendance_note,
      (s.employee_id=$1) AS is_own
     FROM mic2.shift_assignments s
     JOIN mic2.employees e ON e.id=s.employee_id
@@ -400,7 +400,7 @@ app.post('/api/qc/my-shifts/:id/attendance', authenticate, requireRoles('qc_cont
   return res.status(400).json({ok:false,message:'Выберите корректный статус явки'});
  if(note.length>500)return res.status(400).json({ok:false,message:'Комментарий не должен превышать 500 символов'});
  if(status==='left_early'&&!note)return res.status(400).json({ok:false,message:'Укажите причину раннего ухода'});
- if(['present','left_early'].includes(status)&&!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(actualTime))
+ if(['present','left_early'].includes(status)&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(actualTime))
   return res.status(400).json({ok:false,message:status==='present'?'Укажите фактическое время прихода':'Укажите фактическое время ухода'});
  try{
   const r=await pool.query(`
