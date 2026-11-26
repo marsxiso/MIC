@@ -14,6 +14,7 @@ export default function App(){
  useEffect(()=>{if(token&&employee&&ROLE_PAGES[employee.role_code]?.includes(page))load();},[token,page,employee]);
  async function signIn(e){e.preventDefault();setError('');setBusy(true);try{const r=await fetch(API+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({login,password})});const j=await r.json();if(!r.ok)throw Error(j.message||'Не удалось войти');localStorage.setItem('mic2_token',j.token);setEmployee(j.employee);setPage(HOME_PAGE[j.employee.role_code]||'overview');setToken(j.token);}catch(e){setError(e.message);}finally{setBusy(false);}}
  function logout(){localStorage.removeItem('mic2_token');setToken('');setEmployee(null);setPassword('');}
+ function navigateTo(target){if(!ROLE_PAGES[employee?.role_code]?.includes(target))return;setError('');setPage(target);}
  function set(k,v){setForm(f=>({...f,[k]:v}));}
  function setMeasurement(index,key,value){setForm(f=>({...f,measurements:(f.measurements||[]).map((m,i)=>i===index?{...m,[key]:value}:m)}));}
  function setFlyMeasurement(parameterId,value){setForm(f=>({...f,measurements:(f.measurements||[]).map(m=>m.parameter_id===parameterId?{...m,measured_value:value}:m)}));}
