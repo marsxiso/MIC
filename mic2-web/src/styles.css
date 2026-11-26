@@ -11,3 +11,19 @@ button{cursor:pointer}button:disabled{opacity:.55;cursor:wait}.tableActions{disp
 .cardRecord .section{margin:0;align-items:center}.cardRecord .section p{margin:6px 0 0}
 
 .checkField{display:flex;align-items:center;gap:10px;margin:14px 0;color:#b8cbd0;font-size:11px}.checkField input{accent-color:#66b5a0;width:16px;height:16px}.tableWrap td small{display:block;color:#819ba2;font-size:10px;margin-top:5px}.status.draft{background:#49352b;color:#ffd0a8}
+
+.calendarTop{align-items:flex-start;gap:16px}.calendarTop .tableActions{flex-wrap:wrap;justify-content:flex-end}
+.calendarToolbar{display:flex;align-items:center;justify-content:space-between;margin:18px 0 10px;padding:12px 15px;background:#192b33;border:1px solid #30464d;border-radius:12px}
+.calendarToolbar strong{text-transform:capitalize;font-size:15px}.calendarViews{display:flex;gap:4px;background:#101c22;border-radius:8px;padding:3px}
+.calendarViews button{border:0;background:transparent;color:#8da4aa;padding:7px 12px;border-radius:6px;font-size:11px}.calendarViews button.active{background:#31584f;color:#e7fff5}
+.calendarGrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border-left:1px solid #30464d;border-top:1px solid #30464d;border-radius:12px;overflow:hidden;background:#17262e}
+.calendarWeekday{padding:10px;text-align:center;color:#8fa6ac;font-size:11px;border-right:1px solid #30464d;border-bottom:1px solid #30464d;background:#1b2d35}
+.calendarDay{min-height:132px;padding:6px;border-right:1px solid #30464d;border-bottom:1px solid #30464d;min-width:0}
+.calendarDay.outside{background:#111e24}.calendarDay.outside .calendarDate{opacity:.38}.calendarDay.today{background:#1c3435}
+.calendarDate{display:flex;justify-content:space-between;align-items:center;width:100%;padding:3px 5px 7px;background:transparent;border:0;color:#e1eeee;font-size:12px}.calendarDate span{color:#83c9b5;opacity:0}.calendarDate:hover span{opacity:1}
+.shiftEvent{display:flex;flex-direction:column;gap:2px;margin:3px 0;padding:5px 6px;border-radius:6px;min-width:0;font-size:9px;line-height:1.25}
+.shiftEvent b{font-size:9px}.shiftEvent span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.shiftEvent small{opacity:.75;font-size:8px}
+.dayShift{background:#244b43;border-left:3px solid #65b69e}.nightShift{background:#293c5a;border-left:3px solid #799bd1}.qcShift{background:#4b3b29;border-left:3px solid #d5a45e}
+.calendarLegend{display:flex;gap:20px;flex-wrap:wrap;margin:13px 0 24px;color:#a9bec1;font-size:10px}.calendarLegend span{display:flex;align-items:center;gap:7px}.calendarLegend i{width:9px;height:9px;border-radius:3px;display:inline-block}.legendDay{background:#65b69e}.legendNight{background:#799bd1}.legendQc{background:#d5a45e}
+@media(max-width:760px){.calendarDay{min-height:90px;padding:3px}.shiftEvent{padding:3px;font-size:8px}.shiftEvent small{display:none}.calendarTop{display:block}.calendarTop .tableActions{justify-content:flex-start;margin-top:12px}.calendarDate{font-size:10px}.calendarWeekday{padding:7px 2px;font-size:9px}}
+@media(max-width:480px){.calendarDay{min-height:68px}.shiftEvent span{display:none}.shiftEvent{padding:3px 2px}.calendarLegend{gap:9px}}
