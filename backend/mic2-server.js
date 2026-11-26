@@ -246,7 +246,7 @@ app.get('/api/production/shifts', authenticate, requirePermission('shift_schedul
         JOIN mic2.employees e ON e.id=s.employee_id
         WHERE ($2::boolean OR e.role_code=$1)
           AND s.shift_date >= CURRENT_DATE - INTERVAL '365 days'
-          AND s.shift_date < CURRENT_DATE + INTERVAL '366 days'
+          AND s.shift_date < CURRENT_DATE + INTERVAL '731 days'
         ORDER BY s.shift_date,s.shift_code,e.full_name
       `,[employeeRole,req.employee.role_code==='administrator']),
       pool.query(`
@@ -292,7 +292,7 @@ app.post('/api/production/shift-patterns', authenticate, requirePermission('shif
   const employeeId=Number(b.employee_id);
   const patternCode=typeof b.pattern_code==='string'?b.pattern_code:'';
   const startDate=typeof b.start_date==='string'?b.start_date:'';
-  if(!Number.isSafeInteger(employeeId)||employeeId<1||!['3x3','5x2'].includes(patternCode)||!/^\\d{4}-\\d{2}-\\d{2}$/.test(startDate)||Number.isNaN(Date.parse(startDate+'T00:00:00Z'))){
+  if(!Number.isSafeInteger(employeeId)||employeeId<1||!['3x3','5x2'].includes(patternCode)||!/^\\d{4}-\\d{2}-\\d{2}$/.test(startDate)||Number.isNaN(Date.parse(startDate+'T00:00:00Z'))||new Date(startDate+'T00:00:00Z').toISOString().slice(0,10)!==startDate){
     return res.status(400).json({ok:false,message:'Укажите контролёра, график 3/3 или 5/2 и дату начала'});
   }
   const client=await pool.connect();
