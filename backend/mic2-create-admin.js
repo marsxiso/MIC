@@ -14,7 +14,7 @@ async function main() {
 
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: /localhost|127\\.0\\.0\\.1/.test(process.env.DATABASE_URL) || process.env.PGSSLMODE === 'disable'
+    ssl: /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL) || process.env.PGSSLMODE === 'disable'
       ? false
       : { rejectUnauthorized: false },
   });
@@ -30,13 +30,13 @@ async function main() {
        RETURNING id, login`,
       [fullName, login, passwordHash],
     );
-    process.stdout.write(`Created MIC 2.0 administrator: ${result.rows[0].login} (id ${result.rows[0].id})\\n`);
+    process.stdout.write(`Created MIC 2.0 administrator: ${result.rows[0].login} (id ${result.rows[0].id})\n`);
   } finally {
     await pool.end();
   }
 }
 
 main().catch((error) => {
-  process.stderr.write(`Administrator bootstrap failed: ${error.message}\\n`);
+  process.stderr.write(`Administrator bootstrap failed: ${error.message}\n`);
   process.exitCode = 1;
 });
