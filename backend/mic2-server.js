@@ -189,7 +189,7 @@ function requireRoles(...roles) {
     : res.status(403).json({ok:false,message:'Недостаточно прав для этой операции'});
 }
 function hasAccess(role, permission) {
-  return (ROLE_ACCESS[role] || []).includes(permission);
+  return role === 'administrator' || (ROLE_ACCESS[role] || []).includes(permission);
 }
 function requirePermission(...permissions) {
   return (req,res,next) => permissions.some(permission=>hasAccess(req.employee.role_code,permission))
@@ -230,7 +230,7 @@ app.get('/api/production/operators', authenticate, requirePermission('operators:
 app.get('/api/production/shift-candidates', authenticate, requirePermission('shift_schedule:read'), async (req,res,next)=>{
   try {
     const role=req.employee.role_code==='qc_manager'?'qc_controller':'cnc_operator';
-    const r=await pool.query("SELECT id,full_name,job_title FROM mic2.employees WHERE role_code=$1 AND account_status='active' AND terminated_at IS NULL ORDER BY full_name",[role]);
+    const r=req.employee.role_code==='administrator'?await pool.query("SELECT id,full_name,job_title,role_code FROM mic2.employees WHERE role_code IN ('cnc_operator','qc_controller') AND account_status='active' AND terminated_at IS NULL ORDER BY role_code,full_name"):await pool.query("SELECT id,full_name,job_title,role_code FROM mic2.employees WHERE role_code=$1 AND account_status='active' AND terminated_at IS NULL ORDER BY full_name",[role]);
     res.json({ok:true,candidates:r.rows});
   } catch(e){next(e);}
 });
@@ -243,10 +243,10 @@ app.get('/api/production/shifts', authenticate, requirePermission('shift_schedul
         s.starts_at,s.ends_at,s.attendance_status,s.notes
       FROM mic2.shift_assignments s
       JOIN mic2.employees e ON e.id=s.employee_id
-      WHERE e.role_code=$1 AND s.shift_date >= CURRENT_DATE - INTERVAL '7 days'
+      WHERE ($2::boolean OR e.role_code=$1) AND s.shift_date >= CURRENT_DATE - INTERVAL '7 days'
         AND s.shift_date < CURRENT_DATE + INTERVAL '45 days'
       ORDER BY s.shift_date,s.shift_code,e.full_name
-    `,[employeeRole]);
+    `,[employeeRole,req.employee.role_code==='administrator']);
     res.json({ok:true,shifts:r.rows});
   } catch(e){next(e);}
 });
@@ -261,7 +261,7 @@ app.post('/api/production/shifts', authenticate, requirePermission('shift_schedu
     return res.status(400).json({ok:false,message:'Укажите сотрудника, дату и смену'});
   }
   try{
-    const e=await pool.query("SELECT id FROM mic2.employees WHERE id=$1 AND role_code=$2 AND account_status='active' AND terminated_at IS NULL",[employeeId,allowedRole]);
+    const e=req.employee.role_code==='administrator'?await pool.query("SELECT id FROM mic2.employees WHERE id=$1 AND role_code IN ('cnc_operator','qc_controller') AND account_status='active' AND terminated_at IS NULL",[employeeId]):await pool.query("SELECT id FROM mic2.employees WHERE id=$1 AND role_code=$2 AND account_status='active' AND terminated_at IS NULL",[employeeId,allowedRole]);
     if(!e.rowCount)return res.status(400).json({ok:false,message:'Нельзя назначить сотрудника другой специализации'});
     const r=await pool.query(`
       INSERT INTO mic2.shift_assignments(employee_id,shift_date,shift_code,starts_at,ends_at,assigned_by,notes)
@@ -424,6 +424,18 @@ app.get('/api/products', authenticate, requirePermission('products:read'), async
   try { const r=await pool.query("SELECT p.id,p.product_code,p.product_name,p.description,p.box_quantity_norm,COALESCE(json_agg(json_build_object('id',s.id,'setup_code',s.setup_code,'setup_name',s.setup_name)) FILTER(WHERE s.id IS NOT NULL),'[]') AS setups FROM mic2.products p LEFT JOIN mic2.product_setups s ON s.product_id=p.id AND s.is_active WHERE p.is_active GROUP BY p.id ORDER BY p.product_name");res.json({ok:true,products:r.rows}); } catch(e){next(e);}
 });
 
+
+app.get('/api/admin/accounts', authenticate, requirePermission('accounts:create'), async(_req,res,next)=>{
+ try{const r=await pool.query(`SELECT e.id,e.employee_no,e.full_name,e.department,e.job_title,e.role_code,ro.title AS role_title,e.login,e.account_status,e.must_change_password,e.created_at,e.terminated_at FROM mic2.employees e JOIN mic2.roles ro ON ro.code=e.role_code ORDER BY e.account_status,e.full_name`);res.json({ok:true,employees:r.rows});}
+ catch(e){next(e);}
+});
+app.post('/api/admin/accounts/:id/status', authenticate, requirePermission('accounts:create'), async(req,res,next)=>{
+ const id=Number(req.params.id),status=String(req.body?.account_status||'');
+ if(!Number.isSafeInteger(id)||id<1||!['active','suspended'].includes(status))return res.status(400).json({ok:false,message:'Укажите корректный статус учётной записи'});
+ if(id===req.employee.id&&status!=='active')return res.status(409).json({ok:false,message:'Нельзя заблокировать собственную учётную запись'});
+ try{const r=await pool.query('UPDATE mic2.employees SET account_status=$2 WHERE id=$1 RETURNING id,full_name,account_status',[id,status]);if(!r.rowCount)return res.status(404).json({ok:false,message:'Сотрудник не найден'});await pool.query(`INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,after_data) VALUES($1,$2,'account_status_changed','employee',$3,$4::jsonb)`,[req.employee.id,req.employee.role_code,id,JSON.stringify(r.rows[0])]);res.json({ok:true,employee:r.rows[0]});}
+ catch(e){next(e);}
+});
 app.post('/api/admin/accounts', authenticate, requirePermission('accounts:create'), async (req,res,next)=>{
   try { const b=req.body||{}; if(!b.full_name?.trim()||!b.job_title?.trim()||!b.login?.trim()||!b.password||b.password.length<10)return res.status(400).json({ok:false,message:'Заполните ФИО, должность, логин и пароль от 10 символов'});
     if(!['production','qc','management','administration'].includes(b.department))return res.status(400).json({ok:false,message:'Некорректное подразделение'});
