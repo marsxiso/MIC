@@ -606,6 +606,38 @@ app.post('/api/admin/accounts/:id/status', authenticate, requirePermission('acco
  try{const r=await pool.query('UPDATE mic2.employees SET account_status=$2 WHERE id=$1 RETURNING id,full_name,account_status',[id,status]);if(!r.rowCount)return res.status(404).json({ok:false,message:'Сотрудник не найден'});await pool.query(`INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,after_data) VALUES($1,$2,'account_status_changed','employee',$3,$4::jsonb)`,[req.employee.id,req.employee.role_code,id,JSON.stringify(r.rows[0])]);res.json({ok:true,employee:r.rows[0]});}
  catch(e){next(e);}
 });
+app.put('/api/admin/accounts/:id', authenticate, requirePermission('accounts:create'), async(req,res,next)=>{
+  const id=Number(req.params.id),b=req.body||{};
+  const positions={
+    cnc_operator:{department:'production',job_title:'Оператор ЧПУ'},
+    qc_controller:{department:'qc',job_title:'Контролёр ОТК'},
+    production_manager:{department:'production',job_title:'Начальник производства'},
+    qc_manager:{department:'qc',job_title:'Начальник ОТК'},
+    technical_director:{department:'management',job_title:'Технический директор'},
+    administrator:{department:'administration',job_title:'Администратор'}
+  };
+  const position=positions[b.role_code];
+  if(!Number.isSafeInteger(id)||id<1||!b.full_name?.trim()||!position||!b.login?.trim())
+    return res.status(400).json({ok:false,message:'Проверьте ФИО, должность и логин'});
+  if(b.password!==undefined&&b.password!==''&&b.password.length<10)
+    return res.status(400).json({ok:false,message:'Новый пароль должен содержать не менее 10 символов'});
+  try{
+    const before=await pool.query('SELECT id,full_name,department,job_title,role_code,login FROM mic2.employees WHERE id=$1',[id]);
+    if(!before.rowCount)return res.status(404).json({ok:false,message:'Сотрудник не найден'});
+    let q,values;
+    if(b.password){
+      const hash=await bcrypt.hash(b.password,12);
+      q='UPDATE mic2.employees SET full_name=$2,department=$3,job_title=$4,role_code=$5,login=$6,password_hash=$7,must_change_password=TRUE WHERE id=$1 RETURNING id,full_name,department,job_title,role_code,login,account_status';
+      values=[id,b.full_name.trim(),position.department,position.job_title,b.role_code,b.login.trim(),hash];
+    }else{
+      q='UPDATE mic2.employees SET full_name=$2,department=$3,job_title=$4,role_code=$5,login=$6 WHERE id=$1 RETURNING id,full_name,department,job_title,role_code,login,account_status';
+      values=[id,b.full_name.trim(),position.department,position.job_title,b.role_code,b.login.trim()];
+    }
+    const updated=await pool.query(q,values);
+    await pool.query(`INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,before_data,after_data) VALUES($1,$2,'account_updated','employee',$3,$4::jsonb,$5::jsonb)`,[req.employee.id,req.employee.role_code,id,JSON.stringify(before.rows[0]),JSON.stringify(updated.rows[0])]);
+    res.json({ok:true,employee:updated.rows[0]});
+  }catch(e){if(e.code==='23505')return res.status(409).json({ok:false,message:'Такой логин уже используется'});next(e);}
+});
 app.post('/api/admin/accounts', authenticate, requirePermission('accounts:create'), async (req,res,next)=>{
   try {
     const b=req.body||{};
