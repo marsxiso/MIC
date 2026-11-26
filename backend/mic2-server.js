@@ -135,11 +135,11 @@ app.post('/api/setup/administrator', async (req, res, next) => {
     return res.status(401).json({ ok: false, message: 'Недействительный ключ настройки' });
   }
 
-  const login = typeof req.body?.login === 'string' ? req.body.login.trim() : '';
-  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  const login = typeof req.body?.login === 'string' ? req.body.login.trim() : (process.env.MIC2_ADMIN_LOGIN || '').trim();
+  const password = typeof req.body?.password === 'string' ? req.body.password : (process.env.MIC2_ADMIN_PASSWORD || '');
   const fullName = typeof req.body?.full_name === 'string' && req.body.full_name.trim()
     ? req.body.full_name.trim()
-    : 'MIC 2.0 Administrator';
+    : (process.env.MIC2_ADMIN_NAME || 'MIC 2.0 Administrator').trim();
 
   if (!login || login.length > 100 || password.length < 12 || password.length > 200) {
     return res.status(400).json({ ok: false, message: 'Укажите логин и пароль длиной от 12 символов' });
