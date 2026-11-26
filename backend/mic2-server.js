@@ -180,7 +180,7 @@ const ROLE_ACCESS = Object.freeze({
   production_manager: ['dashboard:read', 'products:read', 'products:write', 'bins:read', 'bins:write', 'cycles:read', 'cycles:write', 'operators:assign', 'shift_schedule:read', 'shift_schedule:write'],
   cnc_operator: ['cycles:own:read', 'output:own:write'],
   qc_controller: ['qc:queue:read', 'qc:inspect:write', 'qc:own:read', 'qc:cards:read'],
-  qc_manager: ['dashboard:read', 'qc:queue:read', 'qc:inspect:write', 'qc:all:read', 'qc:cards:read', 'qc:cards:write', 'shift_schedule:read', 'shift_schedule:write'],
+  qc_manager: ['dashboard:read', 'qc:queue:read', 'qc:inspect:write', 'qc:all:read', 'qc:cards:read', 'qc:cards:write', 'qc:defects:read', 'qc:defects:decide', 'shift_schedule:read', 'shift_schedule:write'],
   technical_director: ['dashboard:read', 'products:read', 'reports:read'],
 });
 function requireRoles(...roles) {
@@ -426,6 +426,51 @@ app.get('/api/qc/history/:id', authenticate, requirePermission('qc:own:read','qc
   }catch(e){next(e);}
 });
 
+
+app.get('/api/qc/defects', authenticate, requirePermission('qc:defects:read'), async (_req,res,next)=>{
+ try{
+  const r=await pool.query(`SELECT d.id,d.cycle_id,d.confirmed_quantity,d.defect_description,d.defect_status,d.confirmed_at,
+   c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,c.setup_code_snapshot,e.full_name AS controller_name,
+   COALESCE(x.decided_quantity,0)::int AS decided_quantity,
+   GREATEST(d.confirmed_quantity-COALESCE(x.decided_quantity,0),0)::int AS undecided_quantity,
+   COALESCE(x.decisions,'[]'::json) AS decisions
+   FROM mic2.defects d JOIN mic2.production_cycles c ON c.id=d.cycle_id
+   JOIN mic2.employees e ON e.id=d.confirmed_by
+   LEFT JOIN LATERAL(SELECT SUM(dd.decided_quantity)::int AS decided_quantity,
+    json_agg(json_build_object('id',dd.id,'decision_type',dd.decision_type,'quantity',dd.decided_quantity,'decided_at',dd.decided_at,'note',dd.note) ORDER BY dd.decided_at,dd.id) AS decisions
+    FROM mic2.defect_decisions dd WHERE dd.defect_id=d.id) x ON TRUE
+   WHERE d.defect_status IN ('awaiting_decision','active') ORDER BY d.confirmed_at,d.id`);
+  res.json({ok:true,defects:r.rows});
+ }catch(e){next(e);}
+});
+app.post('/api/qc/defects/:id/decisions', authenticate, requirePermission('qc:defects:decide'), async (req,res,next)=>{
+ const defectId=Number(req.params.id),quantity=Number(req.body?.quantity),decisionType=String(req.body?.decision_type||'');
+ const note=typeof req.body?.note==='string'?req.body.note.trim():'';
+ const map={with_good_product:{movement:'qc_good',from:'production_pending_qc',to:'good_unboxed',disposition:'packed_with_good'},isolator:{movement:'qc_to_isolator',from:'production_pending_qc',to:'isolator_external',disposition:'isolator_in'},rework:{movement:'qc_to_rework',from:'production_pending_qc',to:'rework_external',disposition:'rework_sent'},scrap:{movement:'scrapped',from:'production_pending_qc',to:'scrapped',disposition:'scrapped'}};
+ if(!Number.isSafeInteger(defectId)||defectId<1||!Number.isSafeInteger(quantity)||quantity<1||!map[decisionType])return res.status(400).json({ok:false,message:'Укажите корректное решение и количество деталей'});
+ const c=await pool.connect();
+ try{
+  await c.query('BEGIN');
+  const d=await c.query("SELECT id,cycle_id,confirmed_quantity,defect_status FROM mic2.defects WHERE id=$1 FOR UPDATE",[defectId]);
+  if(!d.rowCount||!['awaiting_decision','active'].includes(d.rows[0].defect_status))throw Object.assign(new Error('Дефект уже закрыт или не найден'),{status:404});
+  const prior=await c.query('SELECT COALESCE(SUM(decided_quantity),0)::int AS quantity FROM mic2.defect_decisions WHERE defect_id=$1',[defectId]);
+  const remaining=d.rows[0].confirmed_quantity-prior.rows[0].quantity;
+  if(quantity>remaining)throw Object.assign(new Error(`Для решения осталось ${remaining} деталей`),{status:409});
+  const m=map[decisionType];
+  const decision=await c.query('INSERT INTO mic2.defect_decisions(defect_id,decision_type,decided_quantity,decision_by,note) VALUES($1,$2,$3,$4,$5) RETURNING id',[defectId,decisionType,quantity,req.employee.id,note||null]);
+  await c.query('INSERT INTO mic2.cycle_quantity_movements(cycle_id,movement_type,from_bucket,to_bucket,quantity,defect_id,entered_by,note) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[d.rows[0].cycle_id,m.movement,m.from,m.to,quantity,defectId,req.employee.id,note||m.disposition]);
+  await c.query('INSERT INTO mic2.defect_dispositions(defect_id,decision_id,disposition_type,quantity,performed_by,confirmed_by,note) VALUES($1,$2,$3,$4,$5,$5,$6)',[defectId,decision.rows[0].id,m.disposition,quantity,req.employee.id,note||null]);
+  if(decisionType==='isolator')await c.query("INSERT INTO mic2.isolator_movements(defect_id,movement_type,quantity,confirmed_by,note) VALUES($1,'in',$2,$3,$4)",[defectId,quantity,req.employee.id,note||null]);
+  if(decisionType==='rework')await c.query('INSERT INTO mic2.rework_records(defect_id,quantity_sent,note) VALUES($1,$2,$3)',[defectId,quantity,note||null]);
+  const total=prior.rows[0].quantity+quantity,newStatus=total>=d.rows[0].confirmed_quantity?'resolved':'active';
+  await c.query("UPDATE mic2.defects SET defect_status=$2,closed_at=CASE WHEN $2='resolved' THEN now() ELSE NULL END WHERE id=$1",[defectId,newStatus]);
+  await c.query(`INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,before_data,after_data,reason)
+   VALUES($1,$2,'qc_defect_decision','defect',$3,$4::jsonb,$5::jsonb,$6)`,
+   [req.employee.id,req.employee.role_code,defectId,JSON.stringify({status:d.rows[0].defect_status,undecided_quantity:remaining}),JSON.stringify({status:newStatus,decision_type:decisionType,quantity,remaining_quantity:remaining-quantity}),note||null]);
+  await c.query('COMMIT');res.status(201).json({ok:true,decision_id:decision.rows[0].id,remaining_quantity:remaining-quantity,defect_status:newStatus});
+ }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.status)return res.status(e.status).json({ok:false,message:e.message});next(e);}
+ finally{c.release();}
+});
 app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), async (_req,res,next)=>{
   try {
     const r=await pool.query(`
