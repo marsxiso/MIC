@@ -214,6 +214,14 @@ app.get('/api/production/operators', authenticate, requireRoles('production_mana
   } catch(e){next(e);}
 });
 
+app.get('/api/production/shift-candidates', authenticate, requireRoles('production_manager','qc_manager'), async (req,res,next)=>{
+  try {
+    const role=req.employee.role_code==='qc_manager'?'qc_controller':'cnc_operator';
+    const r=await pool.query("SELECT id,full_name,job_title FROM mic2.employees WHERE role_code=$1 AND account_status='active' AND terminated_at IS NULL ORDER BY full_name",[role]);
+    res.json({ok:true,candidates:r.rows});
+  } catch(e){next(e);}
+});
+
 app.get('/api/production/shifts', authenticate, requireRoles('production_manager','qc_manager'), async (req,res,next)=>{
   try {
     const employeeRole=req.employee.role_code==='qc_manager'?'qc_controller':'cnc_operator';
