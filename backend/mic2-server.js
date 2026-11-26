@@ -220,7 +220,7 @@ app.get('/api/dashboard', authenticate, requirePermission('dashboard:read'), asy
 app.get('/api/roles', authenticate, requirePermission('roles:read'), async (_req,res,next)=>{try{const r=await pool.query('SELECT code,title FROM mic2.roles ORDER BY title');res.json({ok:true,roles:r.rows});}catch(e){next(e);}});
 
 // Employee directory endpoint intentionally not exposed to any role.
-app.get('/api/production/operators', authenticate, requirePermission('products:write'), async (_req,res,next)=>{
+app.get('/api/production/operators', authenticate, requirePermission('operators:assign'), async (_req,res,next)=>{
   try {
     const r=await pool.query("SELECT id,full_name,employee_no FROM mic2.employees WHERE role_code='cnc_operator' AND account_status='active' AND terminated_at IS NULL ORDER BY full_name");
     res.json({ok:true,operators:r.rows});
@@ -284,18 +284,18 @@ app.post('/api/admin/accounts', authenticate, requirePermission('accounts:create
   }catch(e){if(e.code==='23505')return res.status(409).json({ok:false,message:'Такой логин уже существует'});next(e);}
 });
 
-app.post('/api/products', authenticate, requirePermission('cycles:write'), async (req,res,next)=>{
+app.post('/api/products', authenticate, requirePermission('products:write'), async (req,res,next)=>{
   const b=req.body||{};const norm=Number(b.box_quantity_norm);if(!b.product_code?.trim()||!b.product_name?.trim()||!Number.isInteger(norm)||norm<1||!b.setup_code?.trim()||!b.setup_name?.trim())return res.status(400).json({ok:false,message:'Заполните код, название, норму коробки и наладку'});
   const c=await pool.connect();try{await c.query('BEGIN');const p=await c.query('INSERT INTO mic2.products(product_code,product_name,description,box_quantity_norm,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *',[b.product_code.trim(),b.product_name.trim(),b.description||null,norm,req.employee.id]);const s=await c.query('INSERT INTO mic2.product_setups(product_id,setup_code,setup_name) VALUES($1,$2,$3) RETURNING *',[p.rows[0].id,b.setup_code.trim(),b.setup_name.trim()]);await c.query('COMMIT');res.status(201).json({ok:true,product:p.rows[0],setup:s.rows[0]});}catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.code==='23505')return res.status(409).json({ok:false,message:'Такой код уже используется'});next(e);}finally{c.release();}
 });
 
-app.post('/api/cycles', authenticate, requirePermission('bins:read'), async (req,res)=>{
+app.post('/api/cycles', authenticate, requirePermission('cycles:write'), async (req,res)=>{
   const b=req.body||{};const binId=Number(b.bin_id),productId=Number(b.product_id),setupId=Number(b.setup_id),operatorId=Number(b.operator_id);if(![binId,productId,setupId,operatorId].every(Number.isSafeInteger))return res.status(400).json({ok:false,message:'Выберите контейнер, изделие, наладку и оператора'});
   const c=await pool.connect();try{await c.query('BEGIN');const bin=await c.query("SELECT id FROM mic2.plastic_bins WHERE id=$1 AND bin_status='free' FOR UPDATE",[binId]);if(!bin.rowCount)throw Object.assign(Error('Контейнер не свободен'),{status:409});const p=await c.query('SELECT * FROM mic2.products WHERE id=$1 AND is_active',[productId]);if(!p.rowCount)throw Object.assign(Error('Изделие не найдено'),{status:404});const s=await c.query('SELECT * FROM mic2.product_setups WHERE id=$1 AND product_id=$2 AND is_active',[setupId,productId]);if(!s.rowCount)throw Object.assign(Error('Наладка не соответствует изделию'),{status:400});const op=await c.query("SELECT id FROM mic2.employees WHERE id=$1 AND role_code='cnc_operator' AND account_status='active' AND terminated_at IS NULL",[operatorId]);if(!op.rowCount)throw Object.assign(Error('Выбранный сотрудник не является активным оператором ЧПУ'),{status:400});const n=await c.query('SELECT COALESCE(MAX(cycle_no),0)+1 AS n FROM mic2.production_cycles WHERE bin_id=$1',[binId]);const cy=await c.query('INSERT INTO mic2.production_cycles(bin_id,cycle_no,product_id,setup_id,started_by,responsible_employee_id,product_code_snapshot,product_name_snapshot,setup_code_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *',[binId,n.rows[0].n,productId,setupId,req.employee.id,operatorId,p.rows[0].product_code,p.rows[0].product_name,s.rows[0].setup_code]);await c.query("UPDATE mic2.plastic_bins SET bin_status='occupied' WHERE id=$1",[binId]);await c.query('INSERT INTO mic2.cycle_operator_periods(cycle_id,operator_id,approved_by) VALUES($1,$2,$3)',[cy.rows[0].id,operatorId,req.employee.id]);await c.query('COMMIT');res.status(201).json({ok:true,cycle:cy.rows[0]});
   }catch(e){await c.query('ROLLBACK').catch(()=>{});res.status(e.status||500).json({ok:false,message:e.status?e.message:(e.code==='23505'?'У контейнера уже есть активный цикл':'Не удалось открыть цикл')});}finally{c.release();}
 });
 
-app.get('/api/bins', authenticate, requirePermission('bins:write'), async (_req,res,next)=>{
+app.get('/api/bins', authenticate, requirePermission('bins:read'), async (_req,res,next)=>{
   try { const r=await pool.query("SELECT b.id,b.bin_status,c.id AS cycle_id,c.cycle_no,c.cycle_status,c.product_name_snapshot,c.setup_code_snapshot,e.full_name AS responsible_name,COALESCE(q.quantity,0)::int AS physical_quantity FROM mic2.plastic_bins b LEFT JOIN LATERAL(SELECT * FROM mic2.production_cycles pc WHERE pc.bin_id=b.id ORDER BY pc.cycle_no DESC LIMIT 1)c ON TRUE LEFT JOIN mic2.employees e ON e.id=c.responsible_employee_id LEFT JOIN LATERAL(SELECT SUM(quantity)::int AS quantity FROM mic2.v_cycle_quantity_balances WHERE cycle_id=c.id AND bucket NOT IN ('rework_external','isolator_external','packed','scrapped'))q ON TRUE ORDER BY b.id");res.json({ok:true,bins:r.rows}); } catch(e){next(e);}
 });
 
@@ -378,7 +378,7 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
   }finally{c.release();}
 });
 
-app.post('/api/bins', authenticate, requirePermission('operators:assign'), async (req,res,next)=>{try{const r=await pool.query('INSERT INTO mic2.plastic_bins(created_by) VALUES($1) RETURNING id,bin_status,created_at',[req.employee.id]);res.status(201).json({ok:true,bin:r.rows[0]});}catch(e){next(e);}});
+app.post('/api/bins', authenticate, requirePermission('bins:write'), async (req,res,next)=>{try{const r=await pool.query('INSERT INTO mic2.plastic_bins(created_by) VALUES($1) RETURNING id,bin_status,created_at',[req.employee.id]);res.status(201).json({ok:true,bin:r.rows[0]});}catch(e){next(e);}});
 
 app.post('/api/cycles/:id/output', authenticate, requirePermission('output:own:write'), async (req,res,next)=>{
   const quantity=Number(req.body?.quantity); if(!Number.isSafeInteger(quantity)||quantity<1)return res.status(400).json({ok:false,message:'Количество должно быть целым числом больше нуля'});
