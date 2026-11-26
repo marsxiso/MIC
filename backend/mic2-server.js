@@ -178,8 +178,8 @@ app.get('/api/auth/me', authenticate, (req, res) => {
 const ROLE_ACCESS = Object.freeze({
   administrator: ['accounts:create', 'roles:read'],
   production_manager: ['dashboard:read', 'products:read', 'products:write', 'bins:read', 'bins:write', 'cycles:read', 'cycles:write', 'operators:assign', 'shift_schedule:read', 'shift_schedule:write'],
-  cnc_operator: ['cycles:own:read', 'output:own:write'],
-  qc_controller: ['qc:queue:read', 'qc:inspect:write', 'qc:own:read', 'qc:cards:read', 'qc:own:shifts', 'qc:production:read', 'qc:fly:read', 'qc:fly:write'],
+  cnc_operator: ['dashboard:read', 'cycles:own:read', 'output:own:write', 'shift_schedule:own:read'],
+  qc_controller: ['dashboard:read', 'qc:queue:read', 'qc:inspect:write', 'qc:own:read', 'qc:cards:read', 'qc:own:shifts', 'qc:production:read', 'qc:fly:read', 'qc:fly:write'],
   qc_manager: ['dashboard:read', 'qc:queue:read', 'qc:inspect:write', 'qc:all:read', 'qc:cards:read', 'qc:cards:write', 'qc:defects:read', 'qc:defects:decide', 'qc:own:shifts', 'qc:production:read', 'qc:fly:read', 'qc:fly:write', 'shift_schedule:read', 'shift_schedule:write'],
   technical_director: ['dashboard:read', 'products:read', 'reports:read'],
 });
@@ -199,6 +199,24 @@ function requirePermission(...permissions) {
 
 app.get('/api/dashboard', authenticate, requirePermission('dashboard:read'), async (req,res,next) => {
   try {
+    if(req.employee.role_code==='cnc_operator'){
+      const q=await Promise.all([
+        pool.query("SELECT COUNT(*)::int AS count FROM mic2.production_cycles WHERE responsible_employee_id=$1 AND cycle_status='active'",[req.employee.id]),
+        pool.query("SELECT COALESCE(SUM(quantity),0)::int AS quantity FROM mic2.production_output_entries WHERE operator_id=$1 AND created_at::date=CURRENT_DATE",[req.employee.id]),
+        pool.query("SELECT COALESCE(SUM(b.quantity),0)::int AS quantity FROM mic2.production_cycles c JOIN mic2.v_cycle_quantity_balances b ON b.cycle_id=c.id AND b.bucket='production_pending_qc' WHERE c.responsible_employee_id=$1 AND c.cycle_status='active'",[req.employee.id]),
+        pool.query("SELECT COUNT(*)::int AS count FROM mic2.shift_assignments WHERE employee_id=$1 AND shift_date=CURRENT_DATE",[req.employee.id])
+      ]);
+      return res.json({ok:true,metrics:{active_cycles:q[0].rows[0].count,output_today:q[1].rows[0].quantity,pending_qc:q[2].rows[0].quantity,shifts_today:q[3].rows[0].count}});
+    }
+    if(req.employee.role_code==='qc_controller'){
+      const q=await Promise.all([
+        pool.query("SELECT COUNT(*)::int AS count,COALESCE(SUM(GREATEST(q.quantity-COALESCE(d.quantity,0),0)),0)::int AS quantity FROM mic2.production_cycles c JOIN mic2.v_cycle_quantity_balances q ON q.cycle_id=c.id AND q.bucket='production_pending_qc' LEFT JOIN LATERAL(SELECT SUM(confirmed_quantity)::int AS quantity FROM mic2.defects WHERE cycle_id=c.id AND defect_status IN ('awaiting_decision','active')) d ON TRUE WHERE c.cycle_status='active' AND q.quantity>COALESCE(d.quantity,0)"),
+        pool.query("SELECT COUNT(*)::int AS count FROM mic2.qc_inspections WHERE controller_id=$1 AND completed_at::date=CURRENT_DATE",[req.employee.id]),
+        pool.query("SELECT COUNT(*)::int AS count FROM mic2.qc_fly_control_events f JOIN mic2.qc_inspections i ON i.id=f.inspection_id WHERE i.controller_id=$1 AND f.created_at::date=CURRENT_DATE",[req.employee.id]),
+        pool.query("SELECT COUNT(*)::int AS count FROM mic2.shift_assignments WHERE employee_id=$1 AND shift_date=CURRENT_DATE",[req.employee.id])
+      ]);
+      return res.json({ok:true,metrics:{pending_cycles:q[0].rows[0].count,pending_quantity:q[0].rows[0].quantity,inspections_today:q[1].rows[0].count,fly_checks_today:q[2].rows[0].count,shifts_today:q[3].rows[0].count}});
+    }
     if(req.employee.role_code==='qc_manager'){
       const q=await Promise.all([
         pool.query("SELECT COUNT(*)::int AS count FROM mic2.defects WHERE defect_status IN ('awaiting_decision','active')"),
@@ -443,6 +461,18 @@ app.post('/api/qc/my-shifts/:id/attendance', authenticate, requireRoles('qc_cont
  }catch(e){next(e);}
 });
 
+app.get('/api/cnc/my-shifts', authenticate, requirePermission('shift_schedule:own:read'), async(req,res,next)=>{
+ try{
+  const r=await pool.query(`
+   SELECT id,shift_date,shift_code,starts_at,ends_at,attendance_status,notes
+   FROM mic2.shift_assignments
+   WHERE employee_id=$1 AND shift_date>=CURRENT_DATE-INTERVAL '30 days'
+     AND shift_date<CURRENT_DATE+INTERVAL '366 days'
+   ORDER BY shift_date,starts_at
+  `,[req.employee.id]);
+  res.json({ok:true,shifts:r.rows});
+ }catch(e){next(e);}
+});
 app.get('/api/qc/my-shifts', authenticate, requirePermission('qc:own:shifts'), async(req,res,next)=>{
  try{
   const r=await pool.query(`
