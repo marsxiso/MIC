@@ -22,7 +22,7 @@ const pool = new Pool({
 function readMigrations() {
   const directory = path.join(__dirname, 'migrations');
   return fs.readdirSync(directory)
-    .filter((name) => /^00[1-8]_.*\.sql$/.test(name))
+    .filter((name) => /^00[1-9]_.*\.sql$/.test(name))
     .sort()
     .map((name) => {
       const fullPath = path.join(directory, name);
