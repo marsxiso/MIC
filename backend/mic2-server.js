@@ -340,6 +340,36 @@ app.get('/api/qc/fly-control', authenticate, requirePermission('qc:fly:read'), a
  }catch(e){next(e);}
 });
 
+
+app.get('/api/qc/fly-control/:id', authenticate, requirePermission('qc:fly:read'), async(req,res,next)=>{
+ const id=Number(req.params.id);
+ if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({ok:false,message:'Некорректная проверка'});
+ try{
+  const ownOnly=req.employee.role_code==='qc_controller';
+  const r=await pool.query(`
+   SELECT f.id,f.inspection_id,f.sample_quantity,f.inspection_result,f.defect_quantity,
+    f.defect_description,f.action_required,f.created_at,i.cycle_id,i.comment,
+    c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,c.setup_code_snapshot,
+    e.full_name AS controller_name,mc.version_no AS card_version,
+    COALESCE(json_agg(json_build_object('parameter_name',mp.parameter_name,
+     'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,'unit',mp.unit,
+     'measured_value',mr.measured_value,'comment',mr.comment)
+     ORDER BY mp.sort_order) FILTER(WHERE mr.id IS NOT NULL),'[]'::json) AS measurements
+   FROM mic2.qc_fly_control_events f
+   JOIN mic2.qc_inspections i ON i.id=f.inspection_id
+   JOIN mic2.production_cycles c ON c.id=i.cycle_id
+   JOIN mic2.employees e ON e.id=i.controller_id
+   LEFT JOIN mic2.measurement_cards mc ON mc.id=i.card_id
+   LEFT JOIN mic2.qc_measurement_results mr ON mr.inspection_id=i.id
+   LEFT JOIN mic2.measurement_parameters mp ON mp.id=mr.parameter_id
+   WHERE f.id=$1 AND (NOT $2 OR i.controller_id=$3)
+   GROUP BY f.id,i.id,c.id,e.full_name,mc.version_no
+  `,[id,ownOnly,req.employee.id]);
+  if(!r.rowCount)return res.status(404).json({ok:false,message:'Летучая проверка не найдена'});
+  res.json({ok:true,check:r.rows[0]});
+ }catch(e){next(e);}
+});
+
 app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'), async(req,res,next)=>{
  const b=req.body||{},cycleId=Number(b.cycle_id),sample=Number(b.sample_quantity),
   defectQty=Number(b.defect_quantity||0),result=String(b.inspection_result||''),
