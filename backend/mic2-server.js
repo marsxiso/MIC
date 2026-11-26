@@ -123,7 +123,7 @@ app.get('/api/health', async (_req, res, next) => {
 
 app.post('/api/setup/administrator', async (req, res, next) => {
   const bootstrapToken = process.env.MIC2_BOOTSTRAP_TOKEN || '';
-  const suppliedToken = (req.get('authorization') || '').replace(/^Bearer\\s+/i, '');
+  const suppliedToken = (req.get('authorization') || '').replace(/^Bearer\s+/i, '');
 
   if (Buffer.byteLength(bootstrapToken, 'utf8') < 32) {
     return res.status(404).json({ ok: false, message: 'Маршрут недоступен' });
