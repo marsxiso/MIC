@@ -179,8 +179,8 @@ const ROLE_ACCESS = Object.freeze({
   administrator: ['accounts:create', 'roles:read'],
   production_manager: ['dashboard:read', 'products:read', 'products:write', 'bins:read', 'bins:write', 'cycles:read', 'cycles:write', 'operators:assign', 'shift_schedule:read', 'shift_schedule:write'],
   cnc_operator: ['cycles:own:read', 'output:own:write'],
-  qc_controller: ['qc:queue:read', 'qc:inspect:write', 'qc:own:read', 'qc:cards:read'],
-  qc_manager: ['dashboard:read', 'qc:queue:read', 'qc:inspect:write', 'qc:all:read', 'qc:cards:read', 'qc:cards:write', 'qc:defects:read', 'qc:defects:decide', 'shift_schedule:read', 'shift_schedule:write'],
+  qc_controller: ['qc:queue:read', 'qc:inspect:write', 'qc:own:read', 'qc:cards:read', 'qc:own:shifts', 'qc:production:read', 'qc:fly:read', 'qc:fly:write'],
+  qc_manager: ['dashboard:read', 'qc:queue:read', 'qc:inspect:write', 'qc:all:read', 'qc:cards:read', 'qc:cards:write', 'qc:defects:read', 'qc:defects:decide', 'qc:own:shifts', 'qc:production:read', 'qc:fly:read', 'qc:fly:write', 'shift_schedule:read', 'shift_schedule:write'],
   technical_director: ['dashboard:read', 'products:read', 'reports:read'],
 });
 function requireRoles(...roles) {
@@ -270,6 +270,122 @@ app.post('/api/production/shifts', authenticate, requirePermission('shift_schedu
     `,[employeeId,shiftDate,shiftCode,b.starts_at||null,b.ends_at||null,req.employee.id,b.notes||null]);
     res.status(201).json({ok:true,shift:r.rows[0]});
   }catch(e){if(e.code==='23505')return res.status(409).json({ok:false,message:'Сотрудник уже назначен на эту смену'});next(e);}
+});
+
+
+app.get('/api/qc/my-shifts', authenticate, requirePermission('qc:own:shifts'), async(req,res,next)=>{
+ try{
+  const r=await pool.query(`
+   SELECT id,shift_date,shift_code,starts_at,ends_at,attendance_status,notes
+   FROM mic2.shift_assignments
+   WHERE employee_id=$1 AND shift_date>=CURRENT_DATE-INTERVAL '30 days'
+     AND shift_date<CURRENT_DATE+INTERVAL '61 days'
+   ORDER BY shift_date,starts_at
+  `,[req.employee.id]);
+  res.json({ok:true,shifts:r.rows});
+ }catch(e){next(e);}
+});
+
+app.get('/api/qc/production', authenticate, requirePermission('qc:production:read'), async(_req,res,next)=>{
+ try{
+  const r=await pool.query(`
+   SELECT c.id AS cycle_id,c.bin_id,c.cycle_no,c.started_at,c.product_code_snapshot,
+    c.product_name_snapshot,c.setup_code_snapshot,e.full_name AS operator_name,
+    COALESCE(outp.output_quantity,0)::int AS output_quantity,
+    COALESCE(bal.pending_qc,0)::int AS pending_qc,
+    COALESCE(bal.good_quantity,0)::int AS good_quantity,
+    COALESCE(bal.rework_quantity,0)::int AS rework_quantity,
+    COALESCE(bal.isolator_quantity,0)::int AS isolator_quantity,
+    c.card_id,mc.version_no AS card_version,
+    COALESCE(params.parameters,'[]'::json) AS measurement_parameters
+   FROM mic2.production_cycles c
+   JOIN mic2.employees e ON e.id=c.responsible_employee_id
+   LEFT JOIN LATERAL(SELECT SUM(quantity)::int AS output_quantity FROM mic2.production_output_entries WHERE cycle_id=c.id) outp ON TRUE
+   LEFT JOIN LATERAL(SELECT
+    SUM(quantity) FILTER(WHERE bucket='production_pending_qc')::int AS pending_qc,
+    SUM(quantity) FILTER(WHERE bucket='good_unboxed')::int AS good_quantity,
+    SUM(quantity) FILTER(WHERE bucket='rework')::int AS rework_quantity,
+    SUM(quantity) FILTER(WHERE bucket='isolator')::int AS isolator_quantity
+    FROM mic2.v_cycle_quantity_balances WHERE cycle_id=c.id) bal ON TRUE
+   LEFT JOIN mic2.measurement_cards mc ON mc.id=c.card_id
+   LEFT JOIN LATERAL(SELECT json_agg(json_build_object('id',mp.id,'parameter_name',mp.parameter_name,
+    'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,'unit',mp.unit,
+    'instruction',mp.instruction) ORDER BY mp.sort_order) AS parameters
+    FROM mic2.measurement_parameters mp WHERE mp.card_id=c.card_id) params ON TRUE
+   WHERE c.cycle_status='active'
+   ORDER BY c.started_at,c.bin_id
+  `);
+  res.json({ok:true,cycles:r.rows});
+ }catch(e){next(e);}
+});
+
+app.get('/api/qc/fly-control', authenticate, requirePermission('qc:fly:read'), async(req,res,next)=>{
+ try{
+  const ownOnly=req.employee.role_code==='qc_controller';
+  const r=await pool.query(`
+   SELECT f.id,f.inspection_id,f.sample_quantity,f.inspection_result,f.defect_quantity,
+    f.defect_description,f.action_required,f.created_at,i.cycle_id,i.comment,
+    c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,c.setup_code_snapshot,
+    e.full_name AS controller_name,mc.version_no AS card_version,
+    (SELECT COUNT(*)::int FROM mic2.qc_measurement_results mr WHERE mr.inspection_id=i.id) AS measured_parameters
+   FROM mic2.qc_fly_control_events f
+   JOIN mic2.qc_inspections i ON i.id=f.inspection_id
+   JOIN mic2.production_cycles c ON c.id=i.cycle_id
+   JOIN mic2.employees e ON e.id=i.controller_id
+   LEFT JOIN mic2.measurement_cards mc ON mc.id=i.card_id
+   WHERE (NOT $1 OR i.controller_id=$2)
+   ORDER BY f.created_at DESC LIMIT 300
+  `,[ownOnly,req.employee.id]);
+  res.json({ok:true,checks:r.rows});
+ }catch(e){next(e);}
+});
+
+app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'), async(req,res,next)=>{
+ const b=req.body||{},cycleId=Number(b.cycle_id),sample=Number(b.sample_quantity),
+  defectQty=Number(b.defect_quantity||0),result=String(b.inspection_result||''),
+  description=typeof b.defect_description==='string'?b.defect_description.trim():'',
+  actionRequired=Boolean(b.action_required),comment=typeof b.comment==='string'?b.comment.trim():'';
+ const measurements=Array.isArray(b.measurements)?b.measurements:[];
+ if(!Number.isSafeInteger(cycleId)||cycleId<1||!Number.isSafeInteger(sample)||sample<1||
+  !Number.isSafeInteger(defectQty)||defectQty<0||defectQty>sample||
+  !['pass','fail','observation'].includes(result)||
+  (result==='fail'&&(defectQty<1||!description))||
+  (result==='pass'&&defectQty!==0)||
+  measurements.length>100||
+  new Set(measurements.map(m=>String(m.parameter_id))).size!==measurements.length)
+  return res.status(400).json({ok:false,message:'Проверьте размер выборки, результат и описание несоответствия'});
+ const c=await pool.connect();
+ try{
+  await c.query('BEGIN');
+  const cycle=await c.query("SELECT id,card_id FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' FOR UPDATE",[cycleId]);
+  if(!cycle.rowCount)throw Object.assign(new Error('Активный производственный цикл не найден'),{status:404});
+  const cardId=cycle.rows[0].card_id;
+  const valid=cardId?await c.query('SELECT id FROM mic2.measurement_parameters WHERE card_id=$1',[cardId]):{rows:[]};
+  const validIds=valid.rows.map(x=>String(x.id));
+  if(measurements.some(m=>!validIds.includes(String(m.parameter_id))||typeof m.measured_value!=='string'||!m.measured_value.trim()))
+   throw Object.assign(new Error('В измерениях есть параметры не из карты этого производственного цикла'),{status:400});
+  if(measurements.length&&!cardId)throw Object.assign(new Error('Для этого цикла не назначена карта измерений'),{status:400});
+  const inspection=await c.query(`
+   INSERT INTO mic2.qc_inspections(cycle_id,controller_id,inspection_type,card_id,completed_at,comment)
+   VALUES($1,$2,'fly_control',$3,now(),$4) RETURNING id
+  `,[cycleId,req.employee.id,cardId,comment||null]);
+  for(const m of measurements)await c.query(`
+   INSERT INTO mic2.qc_measurement_results(inspection_id,parameter_id,measured_value,comment)
+   VALUES($1,$2,$3,$4)
+  `,[inspection.rows[0].id,Number(m.parameter_id),m.measured_value.trim(),m.comment||null]);
+  const event=await c.query(`
+   INSERT INTO mic2.qc_fly_control_events(inspection_id,sample_quantity,inspection_result,defect_quantity,defect_description,action_required)
+   VALUES($1,$2,$3,$4,$5,$6) RETURNING id
+  `,[inspection.rows[0].id,sample,result,defectQty,description||null,actionRequired||result==='fail']);
+  await c.query(`
+   INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,after_data,reason)
+   VALUES($1,$2,'qc_fly_control','qc_inspection',$3,$4::jsonb,$5)
+  `,[req.employee.id,req.employee.role_code,inspection.rows[0].id,
+   JSON.stringify({cycle_id:cycleId,sample_quantity:sample,inspection_result:result,defect_quantity:defectQty,action_required:actionRequired||result==='fail'}),comment||description||null]);
+  await c.query('COMMIT');
+  res.status(201).json({ok:true,inspection_id:inspection.rows[0].id,event_id:event.rows[0].id});
+ }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.status)return res.status(e.status).json({ok:false,message:e.message});next(e);}
+ finally{c.release();}
 });
 
 app.get('/api/products', authenticate, requirePermission('products:read'), async (_req,res,next)=>{
@@ -446,7 +562,7 @@ app.get('/api/qc/defects', authenticate, requirePermission('qc:defects:read'), a
 app.post('/api/qc/defects/:id/decisions', authenticate, requirePermission('qc:defects:decide'), async (req,res,next)=>{
  const defectId=Number(req.params.id),quantity=Number(req.body?.quantity),decisionType=String(req.body?.decision_type||'');
  const note=typeof req.body?.note==='string'?req.body.note.trim():'';
- const map={with_good_product:{movement:'qc_good',from:'production_pending_qc',to:'good_unboxed',disposition:'packed_with_good'},isolator:{movement:'qc_to_isolator',from:'production_pending_qc',to:'isolator_external',disposition:'isolator_in'},rework:{movement:'qc_to_rework',from:'production_pending_qc',to:'rework_external',disposition:'rework_sent'},scrap:{movement:'scrapped',from:'production_pending_qc',to:'scrapped',disposition:'scrapped'}};
+ const map={with_good_product:{movement:'qc_good',from:'production_pending_qc',to:'good_unboxed',disposition:'packed_with_good'},isolator:{movement:'qc_to_isolator',from:'production_pending_qc',to:'isolator',disposition:'isolator_in'},rework:{movement:'qc_to_rework',from:'production_pending_qc',to:'rework',disposition:'rework_sent'},scrap:{movement:'scrapped',from:'production_pending_qc',to:'scrapped',disposition:'scrapped'}};
  if(!Number.isSafeInteger(defectId)||defectId<1||!Number.isSafeInteger(quantity)||quantity<1||!map[decisionType])return res.status(400).json({ok:false,message:'Укажите корректное решение и количество деталей'});
  const c=await pool.connect();
  try{
