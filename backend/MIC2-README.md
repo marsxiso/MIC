@@ -1,11 +1,11 @@
-# MIC 2.0 backend (isolated)
+# MIC backend
 
 This backend is deliberately separate from the legacy `server.js`. It uses only the
 `mic2` PostgreSQL schema and does not run or modify the legacy `public` schema.
 
 ## Environment
 
-Set these variables in the MIC 2.0 Render service:
+Set these variables in the MIC Render service:
 
 - `DATABASE_URL`: the **Internal Database URL** of the dedicated MIC development database.
 - `JWT_SECRET`: a random secret with at least 32 bytes.
@@ -47,4 +47,4 @@ from the environment after use.
 - `GET /api/auth/me` with `Authorization: Bearer <token>`
 
 This is the initial authentication foundation. Business endpoints and role-based
-authorization policies will be added as MIC 2.0 modules are implemented.
+authorization policies will be added as MIC modules are implemented.
