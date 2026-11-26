@@ -38,3 +38,5 @@ button{cursor:pointer}button:disabled{opacity:.55;cursor:wait}.tableActions{disp
 .calendarDay.weekend{background:#14232a}
 .calendarOff{display:block;margin:3px 0;padding:4px 5px;border-radius:5px;background:#26333a;color:#aab9bd;font-size:8px;line-height:1.25;overflow-wrap:anywhere}
 .formHint{padding:10px 12px;margin:10px 0;background:#20363d;border:1px solid #36525a;border-radius:8px;color:#b6c9cc;font-size:11px;line-height:1.5}
+
+.modalError{margin-top:12px;padding:10px 12px;border:1px solid #9a5555;border-radius:8px;background:#3a2529;color:#ffdada;font-size:12px;line-height:1.4}
