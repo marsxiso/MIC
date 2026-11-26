@@ -32,7 +32,7 @@ function readMigrations() {
         .replace(/\s*COMMIT\s*;\s*$/i, '')
         .trim();
 
-      if (!sql) throw new Error(\`Migration \${name} is empty\`);
+      if (!sql) throw new Error('Migration ' + name + ' is empty');
       return {
         name,
         sql,
@@ -45,13 +45,12 @@ async function main() {
   const client = await pool.connect();
   try {
     await client.query('CREATE SCHEMA IF NOT EXISTS mic2');
-    await client.query(\`
-      CREATE TABLE IF NOT EXISTS mic2.schema_migrations (
-        migration_name TEXT PRIMARY KEY,
-        checksum TEXT NOT NULL,
-        applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      )
-    \`);
+    await client.query(
+      'CREATE TABLE IF NOT EXISTS mic2.schema_migrations (' +
+      'migration_name TEXT PRIMARY KEY, ' +
+      'checksum TEXT NOT NULL, ' +
+      'applied_at TIMESTAMPTZ NOT NULL DEFAULT now())'
+    );
 
     for (const migration of readMigrations()) {
       await client.query('BEGIN');
@@ -64,10 +63,10 @@ async function main() {
 
         if (existing.rows.length) {
           if (existing.rows[0].checksum !== migration.checksum) {
-            throw new Error(\`Applied migration \${migration.name} has changed; refusing to continue\`);
+            throw new Error('Applied migration ' + migration.name + ' has changed; refusing to continue');
           }
           await client.query('COMMIT');
-          process.stdout.write(\`Already applied: \${migration.name}\n\`);
+          process.stdout.write('Already applied: ' + migration.name + '\n');
           continue;
         }
 
@@ -77,10 +76,10 @@ async function main() {
           [migration.name, migration.checksum],
         );
         await client.query('COMMIT');
-        process.stdout.write(\`Applied: \${migration.name}\n\`);
+        process.stdout.write('Applied: ' + migration.name + '\n');
       } catch (error) {
         await client.query('ROLLBACK');
-        throw new Error(\`Migration \${migration.name} failed: \${error.message}\`);
+        throw new Error('Migration ' + migration.name + ' failed: ' + error.message);
       }
     }
 
@@ -92,7 +91,7 @@ async function main() {
 
 main()
   .catch((error) => {
-    process.stderr.write(\`MIC 2.0 migration error: \${error.message}\n\`);
+    process.stderr.write('MIC 2.0 migration error: ' + error.message + '\n');
     process.exitCode = 1;
   })
   .finally(async () => {
