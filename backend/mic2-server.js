@@ -179,30 +179,26 @@ function requireRoles(...roles) {
   return (req,res,next) => roles.includes(req.employee.role_code) ? next() : res.status(403).json({ok:false,message:'Недостаточно прав'});
 }
 
-app.get('/api/dashboard', authenticate, async (_req,res,next) => {
+app.get('/api/dashboard', authenticate, requireRoles('administrator','production_manager','qc_manager','technical_director'), async (_req,res,next) => {
   try {
     const q = await Promise.all([
       pool.query("SELECT COUNT(*)::int AS count FROM mic2.production_cycles WHERE cycle_status='active'"),
       pool.query("SELECT bin_status,COUNT(*)::int AS count FROM mic2.plastic_bins GROUP BY bin_status"),
       pool.query('SELECT COUNT(*)::int AS count FROM mic2.products WHERE is_active'),
-      pool.query("SELECT COUNT(*)::int AS count FROM mic2.employees WHERE account_status='active' AND terminated_at IS NULL"),
       pool.query("SELECT COUNT(*)::int AS count FROM mic2.defects WHERE defect_status IN ('awaiting_decision','active')")
     ]);
-    res.json({ok:true,metrics:{active_cycles:q[0].rows[0].count,bins:q[1].rows,active_products:q[2].rows[0].count,active_employees:q[3].rows[0].count,open_defects:q[4].rows[0].count}});
+    res.json({ok:true,metrics:{active_cycles:q[0].rows[0].count,bins:q[1].rows,active_products:q[2].rows[0].count,open_defects:q[3].rows[0].count}});
   } catch(e){next(e);}
 });
 
 app.get('/api/roles', authenticate, async (_req,res,next)=>{try{const r=await pool.query('SELECT code,title FROM mic2.roles ORDER BY title');res.json({ok:true,roles:r.rows});}catch(e){next(e);}});
 
-app.get('/api/employees', authenticate, requireRoles('administrator','production_manager','qc_manager','technical_director'), async (_req,res,next)=>{
-  try { const r=await pool.query('SELECT e.id,e.employee_no,e.full_name,e.department,e.job_title,e.role_code,r.title AS role_title,e.account_status,e.hired_at FROM mic2.employees e JOIN mic2.roles r ON r.code=e.role_code WHERE e.terminated_at IS NULL ORDER BY e.full_name');res.json({ok:true,employees:r.rows}); } catch(e){next(e);}
-});
-
-app.get('/api/products', authenticate, async (_req,res,next)=>{
+// Employee directory endpoint intentionally not exposed to any role.
+app.get('/api/products', authenticate, requireRoles('administrator','production_manager','technical_director'), async (_req,res,next)=>{
   try { const r=await pool.query("SELECT p.id,p.product_code,p.product_name,p.description,p.box_quantity_norm,COALESCE(json_agg(json_build_object('id',s.id,'setup_code',s.setup_code,'setup_name',s.setup_name)) FILTER(WHERE s.id IS NOT NULL),'[]') AS setups FROM mic2.products p LEFT JOIN mic2.product_setups s ON s.product_id=p.id AND s.is_active WHERE p.is_active GROUP BY p.id ORDER BY p.product_name");res.json({ok:true,products:r.rows}); } catch(e){next(e);}
 });
 
-app.post('/api/employees', authenticate, requireRoles('administrator','technical_director'), async (req,res,next)=>{
+app.post('/api/employees', authenticate, requireRoles('administrator'), async (req,res,next)=>{
   try { const b=req.body||{}; if(!b.full_name?.trim()||!b.job_title?.trim()||!b.login?.trim()||!b.password||b.password.length<10)return res.status(400).json({ok:false,message:'Заполните ФИО, должность, логин и пароль от 10 символов'});
     if(!['production','qc','management','administration'].includes(b.department))return res.status(400).json({ok:false,message:'Некорректное подразделение'});
     const role=await pool.query('SELECT code FROM mic2.roles WHERE code=$1',[b.role_code]);if(!role.rowCount)return res.status(400).json({ok:false,message:'Неизвестная роль'});
@@ -221,12 +217,12 @@ app.post('/api/cycles', authenticate, requireRoles('administrator','production_m
   }catch(e){await c.query('ROLLBACK').catch(()=>{});res.status(e.status||500).json({ok:false,message:e.status?e.message:(e.code==='23505'?'У контейнера уже есть активный цикл':'Не удалось открыть цикл')});}finally{c.release();}
 });
 
-app.get('/api/bins', authenticate, async (_req,res,next)=>{
+app.get('/api/bins', authenticate, requireRoles('administrator','production_manager'), async (_req,res,next)=>{
   try { const r=await pool.query("SELECT b.id,b.bin_status,c.id AS cycle_id,c.cycle_no,c.cycle_status,c.product_name_snapshot,c.setup_code_snapshot,e.full_name AS responsible_name,COALESCE(q.quantity,0)::int AS physical_quantity FROM mic2.plastic_bins b LEFT JOIN LATERAL(SELECT * FROM mic2.production_cycles pc WHERE pc.bin_id=b.id ORDER BY pc.cycle_no DESC LIMIT 1)c ON TRUE LEFT JOIN mic2.employees e ON e.id=c.responsible_employee_id LEFT JOIN LATERAL(SELECT SUM(quantity)::int AS quantity FROM mic2.v_cycle_quantity_balances WHERE cycle_id=c.id AND bucket NOT IN ('rework_external','isolator_external','packed','scrapped'))q ON TRUE ORDER BY b.id");res.json({ok:true,bins:r.rows}); } catch(e){next(e);}
 });
 
-app.get('/api/cycles', authenticate, async (_req,res,next)=>{
-  try { const r=await pool.query("SELECT c.id,c.bin_id,c.cycle_no,c.cycle_status,c.started_at,c.ended_at,c.product_name_snapshot,c.product_code_snapshot,c.setup_code_snapshot,e.full_name AS responsible_name,COALESCE(SUM(CASE WHEN b.bucket NOT IN ('rework_external','isolator_external','packed','scrapped') THEN b.quantity ELSE 0 END),0)::int AS physical_quantity,COALESCE(SUM(CASE WHEN b.bucket='production_pending_qc' THEN b.quantity ELSE 0 END),0)::int AS pending_qc FROM mic2.production_cycles c JOIN mic2.employees e ON e.id=c.responsible_employee_id LEFT JOIN mic2.v_cycle_quantity_balances b ON b.cycle_id=c.id GROUP BY c.id,e.full_name ORDER BY c.started_at DESC LIMIT 300");res.json({ok:true,cycles:r.rows}); } catch(e){next(e);}
+app.get('/api/cycles', authenticate, requireRoles('administrator','production_manager','cnc_operator'), async (req,res,next)=>{
+  try { const operatorFilter=req.employee.role_code==='cnc_operator'; const r=await pool.query("SELECT c.id,c.bin_id,c.cycle_no,c.cycle_status,c.started_at,c.ended_at,c.product_name_snapshot,c.product_code_snapshot,c.setup_code_snapshot,e.full_name AS responsible_name,COALESCE(SUM(CASE WHEN b.bucket NOT IN ('rework_external','isolator_external','packed','scrapped') THEN b.quantity ELSE 0 END),0)::int AS physical_quantity,COALESCE(SUM(CASE WHEN b.bucket='production_pending_qc' THEN b.quantity ELSE 0 END),0)::int AS pending_qc FROM mic2.production_cycles c JOIN mic2.employees e ON e.id=c.responsible_employee_id LEFT JOIN mic2.v_cycle_quantity_balances b ON b.cycle_id=c.id GROUP BY c.id,e.full_name HAVING (NOT $1 OR c.responsible_employee_id=$2) ORDER BY c.started_at DESC LIMIT 300",[operatorFilter,req.employee.id]);res.json({ok:true,cycles:r.rows}); } catch(e){next(e);}
 });
 
 
