@@ -315,10 +315,7 @@ app.post('/api/production/shift-patterns', authenticate, requirePermission('shif
     await client.query(`
       DELETE FROM mic2.shift_assignments
       WHERE employee_id=$1
-        AND schedule_pattern_id IN (
-          SELECT id FROM mic2.shift_schedule_patterns
-          WHERE employee_id=$1 AND is_active
-        )
+        AND shift_code='day'
         AND shift_date >= GREATEST($2::date,CURRENT_DATE)
         AND attendance_status='pending'
     `,[employeeId,startDate]);
