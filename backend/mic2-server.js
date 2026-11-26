@@ -238,17 +238,26 @@ app.get('/api/production/shift-candidates', authenticate, requirePermission('shi
 app.get('/api/production/shifts', authenticate, requirePermission('shift_schedule:read'), async (req,res,next)=>{
   try {
     const employeeRole=req.employee.role_code==='qc_manager'?'qc_controller':'cnc_operator';
-    const r=await pool.query(`
-      SELECT s.id,s.employee_id,e.full_name,e.job_title,e.role_code,s.shift_date,s.shift_code,
-        s.starts_at,s.ends_at,s.attendance_status,s.notes
-      FROM mic2.shift_assignments s
-      JOIN mic2.employees e ON e.id=s.employee_id
-      WHERE ($2::boolean OR e.role_code=$1)
-        AND s.shift_date >= CURRENT_DATE - INTERVAL '365 days'
-        AND s.shift_date < CURRENT_DATE + INTERVAL '366 days'
-      ORDER BY s.shift_date,s.shift_code,e.full_name
-    `,[employeeRole,req.employee.role_code==='administrator']);
-    res.json({ok:true,shifts:r.rows});
+    const [r,patterns]=await Promise.all([
+      pool.query(`
+        SELECT s.id,s.employee_id,e.full_name,e.job_title,e.role_code,s.shift_date,s.shift_code,
+          s.starts_at,s.ends_at,s.attendance_status,s.notes,s.schedule_pattern_id
+        FROM mic2.shift_assignments s
+        JOIN mic2.employees e ON e.id=s.employee_id
+        WHERE ($2::boolean OR e.role_code=$1)
+          AND s.shift_date >= CURRENT_DATE - INTERVAL '365 days'
+          AND s.shift_date < CURRENT_DATE + INTERVAL '366 days'
+        ORDER BY s.shift_date,s.shift_code,e.full_name
+      `,[employeeRole,req.employee.role_code==='administrator']),
+      pool.query(`
+        SELECT p.id,p.employee_id,e.full_name,p.pattern_code,p.start_date,p.end_date,p.created_at
+        FROM mic2.shift_schedule_patterns p
+        JOIN mic2.employees e ON e.id=p.employee_id
+        WHERE p.is_active AND ($2::boolean OR e.role_code=$1)
+        ORDER BY e.full_name
+      `,[employeeRole,req.employee.role_code==='administrator'])
+    ]);
+    res.json({ok:true,shifts:r.rows,patterns:patterns.rows});
   } catch(e){next(e);}
 });
 
@@ -278,13 +287,92 @@ app.post('/api/production/shifts', authenticate, requirePermission('shift_schedu
 });
 
 
+app.post('/api/production/shift-patterns', authenticate, requirePermission('shift_schedule:write'), async(req,res,next)=>{
+  const b=req.body||{};
+  const employeeId=Number(b.employee_id);
+  const patternCode=typeof b.pattern_code==='string'?b.pattern_code:'';
+  const startDate=typeof b.start_date==='string'?b.start_date:'';
+  if(!Number.isSafeInteger(employeeId)||employeeId<1||!['3x3','5x2'].includes(patternCode)||!/^\\d{4}-\\d{2}-\\d{2}$/.test(startDate)||Number.isNaN(Date.parse(startDate+'T00:00:00Z'))){
+    return res.status(400).json({ok:false,message:'Укажите контролёра, график 3/3 или 5/2 и дату начала'});
+  }
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const employeeResult=await client.query(
+      "SELECT id,role_code FROM mic2.employees WHERE id=$1 AND role_code='qc_controller' AND account_status='active' AND terminated_at IS NULL FOR UPDATE",
+      [employeeId]
+    );
+    if(!employeeResult.rowCount){
+      await client.query('ROLLBACK');
+      return res.status(400).json({ok:false,message:'Выбрать можно только действующего контролёра ОТК'});
+    }
+    const bounds=await client.query(
+      "SELECT CURRENT_DATE::text AS today, ($1::date + INTERVAL '12 months')::date::text AS end_date",
+      [startDate]
+    );
+    const today=bounds.rows[0].today;
+    const endDate=bounds.rows[0].end_date;
+    await client.query(`
+      DELETE FROM mic2.shift_assignments
+      WHERE employee_id=$1
+        AND schedule_pattern_id IN (
+          SELECT id FROM mic2.shift_schedule_patterns
+          WHERE employee_id=$1 AND is_active
+        )
+        AND shift_date >= GREATEST($2::date,CURRENT_DATE)
+        AND attendance_status='pending'
+    `,[employeeId,startDate]);
+    await client.query(`
+      UPDATE mic2.shift_schedule_patterns
+      SET is_active=FALSE,replaced_at=now(),replaced_by=$2
+      WHERE employee_id=$1 AND is_active
+    `,[employeeId,req.employee.id]);
+    const created=await client.query(`
+      INSERT INTO mic2.shift_schedule_patterns
+        (employee_id,pattern_code,start_date,end_date,created_by,notes)
+      VALUES($1,$2,$3,$4,$5,$6)
+      RETURNING id,employee_id,pattern_code,start_date,end_date,is_active
+    `,[employeeId,patternCode,startDate,endDate,req.employee.id,b.notes||null]);
+    const pattern=created.rows[0];
+    const start=new Date(startDate+'T00:00:00Z');
+    const first=new Date((startDate>today?startDate:today)+'T00:00:00Z');
+    const end=new Date(endDate+'T00:00:00Z');
+    const scheduled=[];
+    for(let day=new Date(first);day<end;day.setUTCDate(day.getUTCDate()+1)){
+      const offset=Math.round((day.getTime()-start.getTime())/86400000);
+      const weekday=day.getUTCDay();
+      const working=patternCode==='3x3'?(offset%6)<3:(weekday>=1&&weekday<=5);
+      if(working)scheduled.push(day.toISOString().slice(0,10));
+    }
+    let inserted=0;
+    for(const date of scheduled){
+      const result=await client.query(`
+        INSERT INTO mic2.shift_assignments
+          (employee_id,shift_date,shift_code,assigned_by,notes,schedule_pattern_id)
+        VALUES($1,$2,'day',$3,$4,$5)
+        ON CONFLICT(employee_id,shift_date,shift_code) DO UPDATE
+          SET schedule_pattern_id=EXCLUDED.schedule_pattern_id,notes=EXCLUDED.notes
+          WHERE mic2.shift_assignments.attendance_status='pending'
+        RETURNING id
+      `,[employeeId,date,req.employee.id,'Автоматически по графику '+(patternCode==='3x3'?'3/3':'5/2'),pattern.id]);
+      inserted+=result.rowCount;
+    }
+    await client.query('COMMIT');
+    res.status(201).json({ok:true,pattern,generated_shifts:inserted,period_start:first.toISOString().slice(0,10),period_end:endDate});
+  }catch(e){
+    await client.query('ROLLBACK');
+    if(e.code==='23505')return res.status(409).json({ok:false,message:'Для сотрудника уже существует активный график. Обновите страницу и повторите операцию.'});
+    next(e);
+  }finally{client.release();}
+});
+
 app.get('/api/qc/my-shifts', authenticate, requirePermission('qc:own:shifts'), async(req,res,next)=>{
  try{
   const r=await pool.query(`
    SELECT id,shift_date,shift_code,starts_at,ends_at,attendance_status,notes
    FROM mic2.shift_assignments
    WHERE employee_id=$1 AND shift_date>=CURRENT_DATE-INTERVAL '30 days'
-     AND shift_date<CURRENT_DATE+INTERVAL '61 days'
+     AND shift_date<CURRENT_DATE+INTERVAL '366 days'
    ORDER BY shift_date,starts_at
   `,[req.employee.id]);
   res.json({ok:true,shifts:r.rows});
