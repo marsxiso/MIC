@@ -11,7 +11,7 @@ const port = Number(process.env.PORT || 3001);
 const jwtSecret = process.env.JWT_SECRET;
 
 if (!process.env.DATABASE_URL) {
-  throw new Error('DATABASE_URL is required for the MIC 2.0 backend');
+  throw new Error('DATABASE_URL is required for the MIC backend');
 }
 
 if (!jwtSecret || Buffer.byteLength(jwtSecret, 'utf8') < 32) {
@@ -30,7 +30,7 @@ const pool = new Pool({
 });
 
 pool.on('error', (error) => {
-  console.error('MIC 2.0 PostgreSQL pool error:', error.message);
+  console.error('MIC PostgreSQL pool error:', error.message);
 });
 
 const allowedOrigins = (process.env.CORS_ORIGIN || '')
@@ -107,13 +107,13 @@ async function authenticate(req, res, next) {
 }
 
 app.get('/', (_req, res) => {
-  res.json({ ok: true, service: 'MIC 2.0 API' });
+  res.json({ ok: true, service: 'MIC API' });
 });
 
 app.get('/api/health', async (_req, res, next) => {
   try {
     await pool.query('SELECT 1 FROM mic2.employees LIMIT 1');
-    res.json({ ok: true, service: 'MIC 2.0 API', database: 'connected' });
+    res.json({ ok: true, service: 'MIC API', database: 'connected' });
   } catch (error) {
     next(error);
   }
@@ -913,16 +913,16 @@ app.post('/api/cycles/:id/output', authenticate, requirePermission('output:own:w
 });
 
 app.use((error, _req, res, _next) => {
-  console.error('MIC 2.0 API error:', error.message);
+  console.error('MIC API error:', error.message);
   res.status(500).json({ ok: false, message: 'Внутренняя ошибка сервера' });
 });
 
 const server = app.listen(port, () => {
-  console.log(`MIC 2.0 API listening on port ${port}`);
+  console.log(`MIC API listening on port ${port}`);
 });
 
 async function shutdown(signal) {
-  console.log(`Received ${signal}; shutting down MIC 2.0 API`);
+  console.log(`Received ${signal}; shutting down MIC API`);
   server.close(async () => {
     await pool.end();
     process.exit(0);
