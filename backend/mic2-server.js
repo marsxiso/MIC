@@ -240,7 +240,7 @@ app.get('/api/production/shifts', authenticate, requirePermission('shift_schedul
     const employeeRole=req.employee.role_code==='qc_manager'?'qc_controller':'cnc_operator';
     const [r,patterns]=await Promise.all([
       pool.query(`
-        SELECT s.id,s.employee_id,e.full_name,e.job_title,e.role_code,s.shift_date,s.shift_code,
+        SELECT s.id,s.employee_id,e.full_name,e.job_title,e.role_code,to_char(s.shift_date,'YYYY-MM-DD') AS shift_date,s.shift_code,
           s.starts_at,s.ends_at,s.attendance_status,s.actual_start_time,s.actual_end_time,s.attendance_note,s.notes,s.schedule_pattern_id
         FROM mic2.shift_assignments s
         JOIN mic2.employees e ON e.id=s.employee_id
@@ -250,7 +250,7 @@ app.get('/api/production/shifts', authenticate, requirePermission('shift_schedul
         ORDER BY s.shift_date,s.shift_code,e.full_name
       `,[employeeRole,req.employee.role_code==='administrator']),
       pool.query(`
-        SELECT p.id,p.employee_id,e.full_name,p.pattern_code,p.start_date,p.end_date,p.created_at
+        SELECT p.id,p.employee_id,e.full_name,p.pattern_code,to_char(p.start_date,'YYYY-MM-DD') AS start_date,to_char(p.end_date,'YYYY-MM-DD') AS end_date,p.created_at
         FROM mic2.shift_schedule_patterns p
         JOIN mic2.employees e ON e.id=p.employee_id
         WHERE p.is_active AND ($2::boolean OR e.role_code=$1)
