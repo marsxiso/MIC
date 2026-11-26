@@ -287,6 +287,30 @@ app.post('/api/production/shifts', authenticate, requirePermission('shift_schedu
 });
 
 
+app.patch('/api/production/shifts/:id/attendance-times', authenticate, requireRoles('qc_manager'), async(req,res,next)=>{
+ const id=Number(req.params.id),body=req.body||{};
+ const start=body.actual_start_time==null?'':String(body.actual_start_time).trim();
+ const end=body.actual_end_time==null?'':String(body.actual_end_time).trim();
+ const validTime=v=>!v||/^([01]\\d|2[0-3]):[0-5]\\d$/.test(v);
+ if(!Number.isSafeInteger(id)||id<1||!validTime(start)||!validTime(end))
+  return res.status(400).json({ok:false,message:'Укажите корректное время прихода и ухода'});
+ try{
+  const r=await pool.query(`
+   UPDATE mic2.shift_assignments s
+   SET actual_start_time=$2::time,
+       actual_end_time=$3::time,
+       attendance_adjusted_by=$4,
+       attendance_adjusted_at=now()
+   FROM mic2.employees e
+   WHERE s.id=$1 AND s.employee_id=e.id AND e.role_code='qc_controller'
+   RETURNING s.id,s.actual_start_time,s.actual_end_time,s.attendance_status,s.attendance_adjusted_at
+  `,[id,start||null,end||null,req.employee.id]);
+  if(!r.rowCount)return res.status(404).json({ok:false,message:'Смена контролёра ОТК не найдена'});
+  res.json({ok:true,shift:r.rows[0]});
+ }catch(e){next(e);}
+});
+
+
 app.post('/api/production/shift-patterns', authenticate, requirePermission('shift_schedule:write'), async(req,res,next)=>{
   const b=req.body||{};
   const employeeId=Number(b.employee_id);
