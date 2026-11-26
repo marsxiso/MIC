@@ -344,19 +344,17 @@ app.post('/api/production/shift-patterns', authenticate, requirePermission('shif
       const working=patternCode==='3x3'?(offset%6)<3:(weekday>=1&&weekday<=5);
       if(working)scheduled.push(day.toISOString().slice(0,10));
     }
-    let inserted=0;
-    for(const date of scheduled){
-      const result=await client.query(`
-        INSERT INTO mic2.shift_assignments
-          (employee_id,shift_date,shift_code,assigned_by,notes,schedule_pattern_id)
-        VALUES($1,$2,'day',$3,$4,$5)
-        ON CONFLICT(employee_id,shift_date,shift_code) DO UPDATE
-          SET schedule_pattern_id=EXCLUDED.schedule_pattern_id,notes=EXCLUDED.notes
-          WHERE attendance_status='pending'
-        RETURNING id
-      `,[employeeId,date,req.employee.id,'Автоматически по графику '+(patternCode==='3x3'?'3/3':'5/2'),pattern.id]);
-      inserted+=result.rowCount;
-    }
+    const generated=await client.query(`
+      INSERT INTO mic2.shift_assignments
+        (employee_id,shift_date,shift_code,assigned_by,notes,schedule_pattern_id)
+      SELECT $1,dates.shift_date,'day',$2,$3,$4
+      FROM unnest($5::date[]) AS dates(shift_date)
+      ON CONFLICT(employee_id,shift_date,shift_code) DO UPDATE
+        SET schedule_pattern_id=EXCLUDED.schedule_pattern_id,notes=EXCLUDED.notes
+        WHERE attendance_status='pending'
+      RETURNING id
+    `,[employeeId,req.employee.id,'Автоматически по графику '+(patternCode==='3x3'?'3/3':'5/2'),pattern.id,scheduled]);
+    const inserted=generated.rowCount;
     await client.query('COMMIT');
     res.status(201).json({ok:true,pattern,generated_shifts:inserted,period_start:first.toISOString().slice(0,10),period_end:endDate});
   }catch(e){
