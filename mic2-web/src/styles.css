@@ -49,8 +49,8 @@ button{cursor:pointer}button:disabled{opacity:.55;cursor:wait}.tableActions{disp
 .tile{width:100%;min-height:106px;cursor:pointer;transition:background .15s,border-color .15s,transform .15s}.tile:hover,.tile:focus-visible{background:#223b43;border-color:#78bba9;transform:translateY(-2px);outline:none}.tile:focus-visible{box-shadow:0 0 0 2px #8bd4c0}.tile:active{transform:translateY(0)}
 .metricClickable{cursor:pointer;transition:background .15s,border-color .15s,transform .15s}.metricClickable:hover,.metricClickable:focus-visible{background:#223b43;border-color:#78bba9;transform:translateY(-2px);outline:none}.metricClickable:focus-visible{box-shadow:0 0 0 2px #8bd4c0}.metricClickable:active{transform:translateY(0)}
 /* Compact CNC calendar day summaries and full-day details */
-.daySummary{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px;font-size:11px;font-weight:700}
-.daySummary span{padding:3px 6px;border-radius:6px;background:var(--surface-2,#eef2f7);color:var(--text,#263445)}
+.daySummary{display:flex;flex-direction:column;gap:2px;margin-top:5px;font-size:10px;font-weight:700;min-width:0}
+.daySummary span{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 4px;border-radius:5px;background:var(--surface-2,#eef2f7);color:var(--text,#263445)}
 .calendarDay[role="button"]{cursor:pointer}
 .calendarDay[role="button"]:hover{outline:2px solid var(--accent,#6b8fc5);outline-offset:-2px}
 .dayDetails{display:flex;flex-direction:column;gap:10px;margin-top:14px}
