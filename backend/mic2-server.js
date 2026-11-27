@@ -491,6 +491,22 @@ app.get('/api/cnc/my-shifts', authenticate, requirePermission('shift_schedule:ow
   res.json({ok:true,shifts:r.rows});
  }catch(e){next(e);}
 });
+app.get('/api/cnc/team-shifts', authenticate, requireRoles('cnc_operator'), async(req,res,next)=>{
+ try{
+  const r=await pool.query(`
+   SELECT s.id,s.employee_id,e.full_name,s.shift_date,s.shift_code,s.starts_at,s.ends_at,
+    s.attendance_status,s.notes
+   FROM mic2.shift_assignments s
+   JOIN mic2.employees e ON e.id=s.employee_id
+   WHERE e.role_code='cnc_operator' AND e.account_status='active' AND e.terminated_at IS NULL
+    AND s.shift_date>=CURRENT_DATE-INTERVAL '30 days'
+    AND s.shift_date<CURRENT_DATE+INTERVAL '366 days'
+   ORDER BY s.shift_date,s.starts_at,e.full_name
+  `);
+  res.json({ok:true,shifts:r.rows});
+ }catch(e){next(e);}
+});
+
 app.get('/api/qc/my-shifts', authenticate, requirePermission('qc:own:shifts'), async(req,res,next)=>{
  try{
   const r=await pool.query(`
