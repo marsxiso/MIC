@@ -207,9 +207,10 @@ app.get('/api/dashboard', authenticate, requirePermission('dashboard:read'), asy
         pool.query("SELECT COUNT(*)::int AS count FROM mic2.production_cycles WHERE responsible_employee_id=$1 AND cycle_status='active'",[req.employee.id]),
         pool.query("SELECT COALESCE(SUM(quantity),0)::int AS quantity FROM mic2.production_output_entries WHERE operator_id=$1 AND entered_at::date=CURRENT_DATE",[req.employee.id]),
         pool.query("SELECT COALESCE(SUM(b.quantity),0)::int AS quantity FROM mic2.production_cycles c JOIN mic2.v_cycle_quantity_balances b ON b.cycle_id=c.id AND b.bucket='production_pending_qc' WHERE c.responsible_employee_id=$1 AND c.cycle_status='active'",[req.employee.id]),
-        pool.query("SELECT COUNT(*)::int AS count FROM mic2.shift_assignments WHERE employee_id=$1 AND shift_date=CURRENT_DATE",[req.employee.id])
+        pool.query("SELECT COUNT(*)::int AS count FROM mic2.shift_assignments WHERE employee_id=$1 AND shift_date=CURRENT_DATE",[req.employee.id]),
+        pool.query("SELECT c.id,c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,c.started_at,COALESCE(SUM(CASE WHEN b.bucket NOT IN ('rework_external','isolator_external','packed','scrapped') THEN b.quantity ELSE 0 END),0)::int AS physical_quantity FROM mic2.production_cycles c LEFT JOIN mic2.v_cycle_quantity_balances b ON b.cycle_id=c.id WHERE c.responsible_employee_id=$1 AND c.cycle_status='active' GROUP BY c.id ORDER BY c.started_at DESC LIMIT 1",[req.employee.id])
       ]);
-      return res.json({ok:true,metrics:{active_cycles:q[0].rows[0].count,output_today:q[1].rows[0].quantity,pending_qc:q[2].rows[0].quantity,shifts_today:q[3].rows[0].count}});
+      return res.json({ok:true,active_work:q[4].rows[0]||null,metrics:{active_cycles:q[0].rows[0].count,output_today:q[1].rows[0].quantity,pending_qc:q[2].rows[0].quantity,shifts_today:q[3].rows[0].count}});
     }
     if(req.employee.role_code==='qc_controller'){
       const q=await Promise.all([
