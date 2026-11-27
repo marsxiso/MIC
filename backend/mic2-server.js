@@ -460,7 +460,9 @@ app.post('/api/qc/my-shifts/:id/attendance', authenticate, requireRoles('qc_cont
   return res.status(400).json({ok:false,message:'Выберите корректный статус явки'});
  if(note.length>500)return res.status(400).json({ok:false,message:'Комментарий не должен превышать 500 символов'});
  if(status==='left_early'&&!note)return res.status(400).json({ok:false,message:'Укажите причину раннего ухода'});
- if(['present','left_early'].includes(status)&&!/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(actualTime))
+ const timeParts=actualTime.split(':');
+ const validTime=actualTime.length===5&&timeParts.length===2&&timeParts.every(part=>part.length===2&&[...part].every(ch=>ch>='0'&&ch<='9'))&&Number(timeParts[0])<=23&&Number(timeParts[1])<=59;
+ if(['present','left_early'].includes(status)&&!validTime)
   return res.status(400).json({ok:false,message:status==='present'?'Укажите фактическое время прихода':'Укажите фактическое время ухода'});
  try{
   const r=await pool.query(`
