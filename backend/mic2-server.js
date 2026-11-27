@@ -21,6 +21,8 @@ if (!jwtSecret || Buffer.byteLength(jwtSecret, 'utf8') < 32) {
 const databaseIsLocal = /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL);
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  // All production schedules and QC reminders use Novosibirsk local time (UTC+7).
+  options: '-c timezone=Asia/Novosibirsk',
   ssl: databaseIsLocal || process.env.PGSSLMODE === 'disable'
     ? false
     : { rejectUnauthorized: false },
