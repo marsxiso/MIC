@@ -706,7 +706,19 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
   const already=await c.query('SELECT 1 FROM mic2.qc_fly_control_events f JOIN mic2.qc_inspections qi ON qi.id=f.inspection_id WHERE qi.cycle_id=$1 AND f.scheduled_for=$2 LIMIT 1',[cycleId,slot]);
   if(already.rowCount)throw Object.assign(new Error('Летучий контроль за этот временной интервал уже проведён'),{status:409});
   if(defectQty>0&&!description)throw Object.assign(new Error('Опишите обнаруженное несоответствие'),{status:400});
-  const cardId=cycle.rows[0].card_id;
+  // Older production cycles may not have a card_id saved. Match the same active
+  // product card that the QC screen offers as its fallback, so submitted parameter IDs
+  // and server-side validation use one identical card.
+  let cardId=cycle.rows[0].card_id;
+  if(!cardId){
+   const fallback=await c.query(`SELECT mc.id
+    FROM mic2.measurement_cards mc
+    JOIN mic2.products p ON p.id=mc.product_id
+    WHERE p.product_code=(SELECT product_code_snapshot FROM mic2.production_cycles WHERE id=$1)
+      AND mc.review_status='active'
+    ORDER BY mc.version_no DESC LIMIT 1`,[cycleId]);
+   cardId=fallback.rows[0]?.id||null;
+  }
   const valid=cardId?await c.query('SELECT id FROM mic2.measurement_parameters WHERE card_id=$1 AND installation_no=$2',[cardId,installationNo]):{rows:[]};
   const validIds=valid.rows.map(x=>String(x.id));
   if(measurements.some(m=>!validIds.includes(String(m.parameter_id))||typeof m.measured_value!=='string'||!m.measured_value.trim()))
