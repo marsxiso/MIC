@@ -180,8 +180,8 @@ app.get('/api/auth/me', authenticate, (req, res) => {
 
 const ROLE_ACCESS = Object.freeze({
   administrator: ['accounts:create', 'roles:read'],
-  production_manager: ['dashboard:read', 'products:read', 'products:write', 'bins:read', 'bins:write', 'cycles:read', 'cycles:write', 'operators:assign', 'shift_schedule:read', 'shift_schedule:write'],
-  cnc_operator: ['dashboard:read', 'bins:read', 'bins:write', 'cycles:own:read', 'output:own:write', 'shift_schedule:own:read'],
+  production_manager: ['dashboard:read', 'products:read', 'products:write', 'bins:read', 'cycles:read', 'cycles:write', 'operators:assign', 'shift_schedule:read', 'shift_schedule:write'],
+  cnc_operator: ['dashboard:read', 'bins:read', 'cycles:own:read', 'cycles:own:start', 'output:own:write', 'shift_schedule:own:read'],
   qc_controller: ['dashboard:read', 'qc:queue:read', 'qc:inspect:write', 'qc:own:read', 'qc:cards:read', 'qc:own:shifts', 'qc:production:read', 'qc:fly:read', 'qc:fly:write'],
   qc_manager: ['dashboard:read', 'qc:queue:read', 'qc:inspect:write', 'qc:all:read', 'qc:cards:read', 'qc:cards:write', 'qc:defects:read', 'qc:defects:decide', 'qc:own:shifts', 'qc:production:read', 'qc:fly:read', 'qc:fly:write', 'shift_schedule:read', 'shift_schedule:write'],
   technical_director: ['dashboard:read', 'products:read', 'reports:read'],
@@ -788,6 +788,22 @@ app.post('/api/cycles', authenticate, requirePermission('cycles:write'), async (
  const cy=await c.query('INSERT INTO mic2.production_cycles(bin_id,cycle_no,product_id,card_id,started_by,responsible_employee_id,product_code_snapshot,product_name_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[binId,n.rows[0].n,productId,activeCard.rows[0]?.id||null,req.employee.id,operatorId,p.rows[0].product_code,p.rows[0].product_name]);
  await c.query("UPDATE mic2.plastic_bins SET bin_status='occupied' WHERE id=$1",[binId]);await c.query('INSERT INTO mic2.cycle_operator_periods(cycle_id,operator_id,approved_by) VALUES($1,$2,$3)',[cy.rows[0].id,operatorId,req.employee.id]);await c.query('COMMIT');res.status(201).json({ok:true,cycle:cy.rows[0]});
  }catch(e){await c.query('ROLLBACK').catch(()=>{});res.status(e.status||500).json({ok:false,message:e.status?e.message:(e.code==='23505'?'У контейнера уже есть активный цикл':'Не удалось открыть цикл')});}finally{c.release();}
+});
+
+app.post('/api/cycles/start-own', authenticate, requirePermission('cycles:own:start'), async (req,res)=>{
+ const b=req.body||{},binId=Number(b.bin_id),productId=Number(b.product_id),operatorId=Number(req.employee.id);
+ if(!Number.isSafeInteger(binId)||!Number.isSafeInteger(productId))return res.status(400).json({ok:false,message:'Укажите номер контейнера и изделие'});
+ const c=await pool.connect();try{await c.query('BEGIN');
+ const bin=await c.query("SELECT id FROM mic2.plastic_bins WHERE id=$1 AND bin_status='free' FOR UPDATE",[binId]);if(!bin.rowCount)throw Object.assign(Error('Контейнер не найден или уже находится в работе'),{status:409});
+ const p=await c.query('SELECT * FROM mic2.products WHERE id=$1 AND is_active',[productId]);if(!p.rowCount)throw Object.assign(Error('Изделие не найдено или неактивно'),{status:404});
+ const active=await c.query("SELECT id FROM mic2.production_cycles WHERE bin_id=$1 AND cycle_status='active'",[binId]);if(active.rowCount)throw Object.assign(Error('Этот контейнер уже используется в активном цикле'),{status:409});
+ const n=await c.query('SELECT COALESCE(MAX(cycle_no),0)+1 AS n FROM mic2.production_cycles WHERE bin_id=$1',[binId]);
+ const card=await c.query("SELECT id FROM mic2.measurement_cards WHERE product_id=$1 AND review_status='active' ORDER BY version_no DESC LIMIT 1",[productId]);
+ const cy=await c.query('INSERT INTO mic2.production_cycles(bin_id,cycle_no,product_id,card_id,started_by,responsible_employee_id,product_code_snapshot,product_name_snapshot) VALUES($1,$2,$3,$4,$5,$5,$6,$7) RETURNING *',[binId,n.rows[0].n,productId,card.rows[0]?.id||null,operatorId,p.rows[0].product_code,p.rows[0].product_name]);
+ await c.query("UPDATE mic2.plastic_bins SET bin_status='occupied' WHERE id=$1",[binId]);
+ await c.query('INSERT INTO mic2.cycle_operator_periods(cycle_id,operator_id,approved_by) VALUES($1,$2,$3)',[cy.rows[0].id,operatorId,operatorId]);
+ await c.query('COMMIT');res.status(201).json({ok:true,cycle:cy.rows[0]});
+ }catch(e){await c.query('ROLLBACK').catch(()=>{});res.status(e.status||500).json({ok:false,message:e.status?e.message:(e.code==='23505'?'У контейнера уже есть активный цикл':'Не удалось взять контейнер в работу')});}finally{c.release();}
 });
 
 app.get('/api/bins', authenticate, requirePermission('bins:read'), async (_req,res,next)=>{
