@@ -1160,6 +1160,43 @@ app.get('/api/qc/finished-boxes', authenticate, requirePermission('qc:queue:read
  }catch(e){next(e);}
 });
 
+app.get('/api/qc/finished-boxes/:boxId', authenticate, requirePermission('qc:queue:read','qc:all:read'), async(req,res,next)=>{
+ const boxId=Number(req.params.boxId);
+ if(!Number.isSafeInteger(boxId)||boxId<1)return res.status(400).json({ok:false,message:'Некорректный номер коробки'});
+ try{
+  const box=await pool.query(`
+   SELECT fb.id AS carton_no,fb.product_code_snapshot,fb.product_name_snapshot,fb.quantity,fb.box_norm_snapshot,
+    fb.created_at,fb.closed_at,fb.cycle_id,fb.source_bin_id,fb.inspection_id,
+    creator.full_name AS created_by_name,closer.full_name AS closed_by_name,
+    c.cycle_no,c.started_at AS cycle_started_at,c.production_finished_at,c.responsible_employee_id,
+    operator.full_name AS operator_name,i.completed_at AS inspection_completed_at,i.inspection_type,
+    controller.full_name AS inspection_controller
+   FROM mic2.finished_boxes fb
+   LEFT JOIN mic2.employees creator ON creator.id=fb.created_by
+   LEFT JOIN mic2.employees closer ON closer.id=fb.closed_by
+   LEFT JOIN mic2.production_cycles c ON c.id=fb.cycle_id
+   LEFT JOIN mic2.employees operator ON operator.id=c.responsible_employee_id
+   LEFT JOIN mic2.qc_inspections i ON i.id=fb.inspection_id
+   LEFT JOIN mic2.employees controller ON controller.id=i.controller_id
+   WHERE fb.id=$1
+  `,[boxId]);
+  if(!box.rowCount)return res.status(404).json({ok:false,message:'Коробка не найдена'});
+  const additions=await pool.query(`
+   SELECT a.id,a.quantity,a.added_at,a.note,e.full_name AS employee_name
+   FROM mic2.finished_box_additions a JOIN mic2.employees e ON e.id=a.added_by
+   WHERE a.box_id=$1 ORDER BY a.added_at,a.id
+  `,[boxId]);
+  const audit=await pool.query(`
+   SELECT a.action,a.occurred_at,a.reason,a.before_data,a.after_data,e.full_name AS employee_name
+   FROM mic2.audit_log a LEFT JOIN mic2.employees e ON e.id=a.actor_id
+   WHERE a.entity_type='finished_box' AND a.entity_id=$1
+    AND a.action IN ('qc_finished_carton_closed','qc_finished_carton_refilled')
+   ORDER BY a.occurred_at,a.id
+  `,[boxId]);
+  res.json({ok:true,box:box.rows[0],additions:additions.rows,history:audit.rows});
+ }catch(e){next(e);}
+});
+
 app.post('/api/qc/finished-boxes/pack/:cycleId', authenticate, requirePermission('qc:inspect:write'), async(req,res,next)=>{
  const cycleId=Number(req.params.cycleId);
  if(!Number.isSafeInteger(cycleId)||cycleId<1)return res.status(400).json({ok:false,message:'Некорректный производственный цикл'});
