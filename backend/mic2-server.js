@@ -679,9 +679,10 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
  const c=await pool.connect();
  try{
   await c.query('BEGIN');
-  const cycle=await c.query("SELECT id,card_id,(SELECT COALESCE(SUM(quantity),0)::int FROM mic2.production_output_entries WHERE cycle_id=mic2.production_cycles.id) AS output_quantity FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' AND production_finished_at IS NULL FOR UPDATE",[cycleId]);
+  const cycle=await c.query("SELECT pc.id,pc.card_id,(SELECT COALESCE(SUM(quantity),0)::int FROM mic2.production_output_entries WHERE cycle_id=pc.id) AS output_quantity,COALESCE(s.fly_interval_quantity,100)::int AS fly_interval_quantity,COALESCE((SELECT f.output_quantity_at_check FROM mic2.qc_fly_control_events f JOIN mic2.qc_inspections qi ON qi.id=f.inspection_id WHERE qi.cycle_id=pc.id ORDER BY f.created_at DESC LIMIT 1),0)::int AS last_fly_output FROM mic2.production_cycles pc LEFT JOIN mic2.qc_control_schedules s ON s.product_id=pc.product_id WHERE pc.id=$1 AND pc.cycle_status='active' AND pc.production_finished_at IS NULL FOR UPDATE OF pc",[cycleId]);
   if(!cycle.rowCount)throw Object.assign(new Error('Активный производственный цикл не найден'),{status:404});
   if(sample>cycle.rows[0].output_quantity)throw Object.assign(new Error('Размер выборки не может превышать выпущенное количество деталей'),{status:409});
+  if(cycle.rows[0].fly_interval_quantity===0||cycle.rows[0].output_quantity<cycle.rows[0].last_fly_output+cycle.rows[0].fly_interval_quantity)throw Object.assign(new Error('Летучий контроль ещё не наступил по графику для этого изделия'),{status:409});
   if(defectQty>0&&!description)throw Object.assign(new Error('Опишите обнаруженное несоответствие'),{status:400});
   const cardId=cycle.rows[0].card_id;
   const valid=cardId?await c.query('SELECT id FROM mic2.measurement_parameters WHERE card_id=$1',[cardId]):{rows:[]};
