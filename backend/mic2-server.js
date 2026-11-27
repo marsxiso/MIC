@@ -184,7 +184,7 @@ const ROLE_ACCESS = Object.freeze({
   administrator: ['accounts:create', 'roles:read'],
   production_manager: ['dashboard:read', 'products:read', 'products:write', 'bins:read', 'cycles:read', 'cycles:write', 'output:manage', 'operators:assign', 'shift_schedule:read', 'shift_schedule:write'],
   cnc_operator: ['dashboard:read', 'bins:read', 'products:read', 'cycles:own:read', 'cycles:own:start', 'output:own:write', 'shift_schedule:own:read'],
-  qc_controller: ['dashboard:read', 'qc:queue:read', 'qc:inspect:write', 'qc:own:read', 'qc:cards:read', 'qc:own:shifts', 'qc:production:read', 'qc:fly:read', 'qc:fly:write'],
+  qc_controller: ['dashboard:read', 'qc:queue:read', 'qc:inspect:write', 'qc:own:read', 'qc:cards:read', 'qc:defects:read', 'qc:own:shifts', 'qc:production:read', 'qc:fly:read', 'qc:fly:write'],
   qc_manager: ['dashboard:read', 'qc:queue:read', 'qc:inspect:write', 'qc:all:read', 'qc:cards:read', 'qc:cards:write', 'qc:defects:read', 'qc:defects:decide', 'qc:own:shifts', 'qc:production:read', 'qc:fly:read', 'qc:fly:write', 'shift_schedule:read', 'shift_schedule:write'],
   technical_director: ['dashboard:read', 'products:read', 'reports:read'],
 });
