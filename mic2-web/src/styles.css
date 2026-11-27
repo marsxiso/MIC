@@ -505,3 +505,8 @@ td small{line-height:1.45}
 .reworkTable .smallButton{min-width:112px}
 .reworkTable tbody tr:hover{background:#1b3038}
 @media(max-width:1050px){.reworkTable{min-width:760px}.reworkTable th,.reworkTable td{padding:11px 9px}}
+
+/* Align the rework action heading exactly over its button */
+.reworkTable th:last-child,.reworkTable td:last-child{text-align:center}
+.reworkTable td:last-child .smallButton{display:inline-flex;align-items:center;justify-content:center;margin:0 auto}
+.reworkTable th{vertical-align:middle}
