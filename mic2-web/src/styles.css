@@ -196,3 +196,7 @@ button{cursor:pointer}button:disabled{opacity:.55;cursor:wait}.tableActions{disp
 .qcHomeFooter{display:flex;justify-content:space-between;gap:12px;padding-top:5px;color:#6f898e;font-size:9px}
 @media(max-width:1000px){.qcHomeMetrics{grid-template-columns:repeat(2,minmax(0,1fr))}.qcHomeLinks{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:620px){.qcHomeHero{padding:21px;min-height:0}.qcHomeHeroArt{width:85px;height:90px;flex-basis:85px;transform:scale(.72);transform-origin:center right;margin-right:-12px}.qcHomeHero h2{font-size:20px}.qcHomeMetrics{gap:8px}.qcHomeMetric{padding:13px}.qcHomeMetric>b{font-size:25px}.qcHomeLinks{grid-template-columns:1fr}.qcHomeSectionTitle>span{display:none}.qcHomeFooter{flex-direction:column}}
+
+.qcBoxActions{display:flex;align-items:center;gap:5px;flex-wrap:wrap;min-width:150px}
+.qcBoxActions .smallButton{padding:6px 8px;font-size:9px;white-space:nowrap}
+.qcBoxActions .status{white-space:nowrap}
