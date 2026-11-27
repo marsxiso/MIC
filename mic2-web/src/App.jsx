@@ -101,7 +101,20 @@ function InspectionHistory({data,refresh}){
  return <><div className="section"><div><h2>История проверок</h2><p>Здесь отображаются только проведённые проверки ОТК.</p></div><button className="secondary" onClick={refresh}>Обновить ↻</button></div>{groups.map(g=>{const items=rows.filter(g.filter||((r)=>r.inspection_type===g.key));return <section className="section" key={g.key} style={{display:'block',marginTop:20}}><h2>{g.title}</h2>{renderTable(items)}</section>;})}</>;
 }
 function RoleLinks({nav,onNavigate}){return <><div className="section"><div><h2>Рабочие разделы</h2></div></div><div className="tiles">{nav.filter(([id])=>id!=='overview').map(([id,ic,label])=><button className="tile" key={id} type="button" onClick={()=>onNavigate(id)}><i>{ic}</i><b>{label}</b></button>)}</div></>;}
-function RoleOverview({title,description,metrics,nav,onNavigate}){return <><div className="section"><div><h2>{title}</h2></div></div><div className="metrics">{metrics.map(([label,value,note,target])=><Metric key={label} title={label} value={value} note={note} onClick={()=>onNavigate(target)}/>)}</div><RoleLinks nav={nav} onNavigate={onNavigate}/></>;}
+function RoleOverview({title,description,metrics,nav,onNavigate}){
+ const links=nav.filter(([id])=>id!=='overview');
+ const urgent=Number(metrics[0]?.[1]||0)>0||Number(metrics[1]?.[1]||0)>0;
+ const icons={'qc':'✓','qc-history':'◷','qc-fly':'⌁','qc-production':'▣','qc-calendar':'▦','qc-boxes':'▤'};
+ const descriptions={'qc':'Партии, ожидающие проверки и решения контролёра','qc-history':'Результаты проверок и история действий','qc-fly':'Контрольные точки по времени смены','qc-production':'Текущие циклы, операторы и выпуск','qc-calendar':'Назначенные смены и посещаемость','qc-boxes':'Принятая продукция и упаковка по нормам'};
+ return <div className="qcHome">
+  <section className="qcHomeHero"><div className="qcHomeHeroText"><span className="eyebrow">MIC 2.0 · КАЧЕСТВО</span><h2>{title}</h2><p>{description||'Контроль качества, производственные проверки и прослеживаемость готовой продукции'}</p><div className="qcHomeHeroStatus"><span className={'qcHomePulse '+(urgent?'attention':'')}></span>{urgent?'Есть задачи, требующие внимания':'Критичных задач в очереди нет'}</div></div><div className="qcHomeHeroArt"><div className="qcHomeRing"><span>ОТК</span><b>✓</b></div><i className="qcHomeOrbit one"></i><i className="qcHomeOrbit two"></i></div></section>
+  <div className="qcHomeSectionTitle"><div><h3>Состояние контроля</h3><p>Оперативные показатели на текущий момент</p></div><span>ОБНОВЛЯЕТСЯ ИЗ СИСТЕМЫ</span></div>
+  <div className="qcHomeMetrics">{metrics.map(([label,value,note,target],i)=><button type="button" className={'qcHomeMetric metricTone'+i} key={label} onClick={()=>onNavigate(target)}><span className="qcHomeMetricIcon">{['◉','▤','✓','⌁'][i]}</span><span className="qcHomeMetricLabel">{label}</span><b>{value}</b><small>{note}</small><span className="qcHomeMetricArrow">Открыть раздел ↗</span></button>)}</div>
+  <div className="qcHomeSectionTitle"><div><h3>Рабочие инструменты</h3><p>Быстрый переход к основным задачам контролёра</p></div></div>
+  <div className="qcHomeLinks">{links.map(([id,ic,label],i)=><button type="button" className={'qcHomeLink '+(i===0?'qcHomeLinkPrimary':'')} key={id} onClick={()=>onNavigate(id)}><span className="qcHomeLinkIcon">{icons[id]||ic}</span><span><b>{label}</b><small>{descriptions[id]||'Открыть рабочий раздел'}</small></span><i>↗</i></button>)}</div>
+  <div className="qcHomeFooter"><span>MIC 2.0</span><span>Все действия фиксируются в журнале системы</span></div>
+ </div>;
+}
 function QualityOverview({metrics}){return <div className="metrics"><Metric title="Открытые дефекты" value={metrics.open_defects??0} note="Ожидают решения начальника ОТК"/><Metric title="Проверки сегодня" value={metrics.inspections_today??0} note="Завершённые проверки"/><Metric title="Детали ожидают ОТК" value={metrics.pending_qc??0} note="Доступны для контроля"/></div>;}
 function ControlSchedulePage({data,refresh,save}){
  const [values,setValues]=useState({});
