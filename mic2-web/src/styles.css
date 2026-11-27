@@ -7,7 +7,7 @@ button{cursor:pointer}button:disabled{opacity:.55;cursor:wait}.tableActions{disp
 .parameterList{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 16px}
 .parameterList span{background:#20363d;border:1px solid #36525a;border-radius:8px;padding:8px 10px;color:#b9cece;font-size:11px}
 .status{display:inline-block;padding:6px 9px;border-radius:20px;background:#263941;color:#b7c8cb;font-size:10px;white-space:nowrap}
-.status.active{background:#183f36;color:#91dfc0}.status.draft{background:#3e3421;color:#e8c987}.status.archived{opacity:.65}
+.status.active{background:#183f36;color:#91dfc0}.status.draft{background:#3e3421;color:#e8c987}.status.missed{background:#542b30;color:#ffaaa5;border:1px solid #8f4248}.status.archived{opacity:.65}
 .cardRecord .section{margin:0;align-items:center}.cardRecord .section p{margin:6px 0 0}
 
 .checkField{display:flex;align-items:center;gap:10px;margin:14px 0;color:#b8cbd0;font-size:11px}.checkField input{accent-color:#66b5a0;width:16px;height:16px}.tableWrap td small{display:block;color:#819ba2;font-size:10px;margin-top:5px}.status.draft{background:#49352b;color:#ffd0a8}
