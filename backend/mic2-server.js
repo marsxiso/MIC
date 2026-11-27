@@ -204,7 +204,7 @@ app.get('/api/dashboard', authenticate, requirePermission('dashboard:read'), asy
   try {
     if(req.employee.role_code==='cnc_operator'){
       const q=await Promise.all([
-        pool.query("SELECT COUNT(*)::int AS count FROM mic2.production_cycles WHERE responsible_employee_id=$1 AND cycle_status='active'",[req.employee.id]),
+        pool.query("SELECT COUNT(*)::int AS count FROM mic2.production_cycles WHERE responsible_employee_id=$1 AND cycle_status='active' AND production_finished_at IS NULL",[req.employee.id]),
         pool.query("SELECT COALESCE(SUM(quantity),0)::int AS quantity FROM mic2.production_output_entries WHERE operator_id=$1 AND entered_at::date=CURRENT_DATE",[req.employee.id]),
         pool.query("SELECT COALESCE(SUM(b.quantity),0)::int AS quantity FROM mic2.production_cycles c JOIN mic2.v_cycle_quantity_balances b ON b.cycle_id=c.id AND b.bucket='production_pending_qc' WHERE c.responsible_employee_id=$1 AND c.cycle_status='active'",[req.employee.id]),
         pool.query("SELECT COUNT(*)::int AS count FROM mic2.shift_assignments WHERE employee_id=$1 AND shift_date=CURRENT_DATE",[req.employee.id]),
