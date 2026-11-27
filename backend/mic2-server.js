@@ -334,19 +334,27 @@ app.post('/api/production/shift-patterns', authenticate, requirePermission('shif
   const employeeId=Number(b.employee_id);
   const patternCode=typeof b.pattern_code==='string'?b.pattern_code:'';
   const startDate=typeof b.start_date==='string'?b.start_date:'';
-  if(!Number.isSafeInteger(employeeId)||employeeId<1||!['3x3','5x2'].includes(patternCode)||!/^\d{4}-\d{2}-\d{2}$/.test(startDate)||Number.isNaN(Date.parse(startDate+'T00:00:00Z'))||new Date(startDate+'T00:00:00Z').toISOString().slice(0,10)!==startDate){
-    return res.status(400).json({ok:false,message:'Укажите контролёра, график 3/3 или 5/2 и дату начала'});
+  if(!Number.isSafeInteger(employeeId)||employeeId<1||!['3x3','5x2','2x2x4'].includes(patternCode)||!/^\d{4}-\d{2}-\d{2}$/.test(startDate)||Number.isNaN(Date.parse(startDate+'T00:00:00Z'))||new Date(startDate+'T00:00:00Z').toISOString().slice(0,10)!==startDate){
+    return res.status(400).json({ok:false,message:'Укажите сотрудника, допустимый график и корректную дату начала'});
   }
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
     const employeeResult=await client.query(
-      "SELECT id,role_code FROM mic2.employees WHERE id=$1 AND role_code='qc_controller' AND account_status='active' AND terminated_at IS NULL FOR UPDATE",
+      "SELECT id,role_code FROM mic2.employees WHERE id=$1 AND role_code IN ('qc_controller','cnc_operator') AND account_status='active' AND terminated_at IS NULL FOR UPDATE",
       [employeeId]
     );
     if(!employeeResult.rowCount){
       await client.query('ROLLBACK');
-      return res.status(400).json({ok:false,message:'Выбрать можно только действующего контролёра ОТК'});
+      return res.status(400).json({ok:false,message:'Выбрать можно только действующего сотрудника'});
+    }
+    const targetRole=employeeResult.rows[0].role_code;
+    const roleAllowed =
+      (targetRole==='qc_controller' && ['qc_manager','administrator'].includes(req.employee.role_code) && ['3x3','5x2'].includes(patternCode)) ||
+      (targetRole==='cnc_operator' && ['production_manager','administrator'].includes(req.employee.role_code) && patternCode==='2x2x4');
+    if(!roleAllowed){
+      await client.query('ROLLBACK');
+      return res.status(403).json({ok:false,message:'Для контролёров ОТК доступны графики 3/3 и 5/2, для операторов ЧПУ — только 2/2/4'});
     }
     const bounds=await client.query(
       "SELECT CURRENT_DATE::text AS today, ($1::date + INTERVAL '12 months')::date::text AS end_date",
@@ -357,7 +365,7 @@ app.post('/api/production/shift-patterns', authenticate, requirePermission('shif
     await client.query(`
       DELETE FROM mic2.shift_assignments
       WHERE employee_id=$1
-        AND shift_code='day'
+        AND shift_code IN ('day','night')
         AND shift_date >= GREATEST($2::date,CURRENT_DATE)
         AND attendance_status='pending'
     `,[employeeId,startDate]);
@@ -376,23 +384,30 @@ app.post('/api/production/shift-patterns', authenticate, requirePermission('shif
     const start=new Date(startDate+'T00:00:00Z');
     const first=new Date((startDate>today?startDate:today)+'T00:00:00Z');
     const end=new Date(endDate+'T00:00:00Z');
-    const scheduled=[];
+    const scheduledDates=[],scheduledCodes=[];
     for(let day=new Date(first);day<end;day.setUTCDate(day.getUTCDate()+1)){
       const offset=Math.round((day.getTime()-start.getTime())/86400000);
       const weekday=day.getUTCDay();
-      const working=patternCode==='3x3'?(offset%6)<3:(weekday>=1&&weekday<=5);
-      if(working)scheduled.push(day.toISOString().slice(0,10));
+      if(patternCode==='2x2x4'){
+        const phase=offset%8;
+        if(phase===0||phase===1){scheduledDates.push(day.toISOString().slice(0,10));scheduledCodes.push('day');}
+        else if(phase===2||phase===3){scheduledDates.push(day.toISOString().slice(0,10));scheduledCodes.push('night');}
+      } else {
+        const working=patternCode==='3x3'?(offset%6)<3:(weekday>=1&&weekday<=5);
+        if(working){scheduledDates.push(day.toISOString().slice(0,10));scheduledCodes.push('day');}
+      }
     }
+    const patternLabel=patternCode==='2x2x4'?'2 дневные / 2 ночные / 4 выходных':patternCode==='3x3'?'3/3':'5/2';
     const generated=await client.query(`
       INSERT INTO mic2.shift_assignments AS existing
         (employee_id,shift_date,shift_code,assigned_by,notes,schedule_pattern_id)
-      SELECT $1,dates.shift_date,'day',$2,$3,$4
-      FROM unnest($5::date[]) AS dates(shift_date)
+      SELECT $1,dates.shift_date,dates.shift_code,$2,$3,$4
+      FROM unnest($5::date[],$6::text[]) AS dates(shift_date,shift_code)
       ON CONFLICT(employee_id,shift_date,shift_code) DO UPDATE
         SET schedule_pattern_id=EXCLUDED.schedule_pattern_id,notes=EXCLUDED.notes
         WHERE existing.attendance_status='pending'
       RETURNING id
-    `,[employeeId,req.employee.id,'Автоматически по графику '+(patternCode==='3x3'?'3/3':'5/2'),pattern.id,scheduled]);
+    `,[employeeId,req.employee.id,'Автоматически по графику '+patternLabel,pattern.id,scheduledDates,scheduledCodes]);
     const inserted=generated.rowCount;
     await client.query('COMMIT');
     res.status(201).json({ok:true,pattern,generated_shifts:inserted,period_start:first.toISOString().slice(0,10),period_end:endDate});
