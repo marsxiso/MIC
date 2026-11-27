@@ -1080,8 +1080,8 @@ app.get('/api/qc/isolator', authenticate, requirePermission('qc:defects:read'), 
    JOIN mic2.production_cycles c ON c.id=d.cycle_id
    JOIN mic2.employees e ON e.id=d.confirmed_by
    JOIN LATERAL(
-    SELECT GREATEST(COALESCE(SUM(CASE WHEN im.movement_type='in' THEN im.quantity WHEN im.movement_type='out' THEN -im.quantity ELSE 0 END),0),0)::int AS quantity,
-     COALESCE(json_agg(json_build_object('movement_type',im.movement_type,'quantity',im.quantity,'note',im.note,'confirmed_by',emp.full_name) ORDER BY im.id),'[]'::json) AS movements
+    SELECT GREATEST(COALESCE(SUM(CASE WHEN im.movement_type='in' THEN im.quantity WHEN im.movement_type IN ('out','return_to_production') THEN -im.quantity ELSE 0 END),0),0)::int AS quantity,
+     COALESCE(json_agg(json_build_object('movement_type',im.movement_type,'quantity',im.quantity,'note',im.note,'occurred_at',im.occurred_at,'confirmed_by',emp.full_name) ORDER BY im.id),'[]'::json) AS movements
     FROM mic2.isolator_movements im
     LEFT JOIN mic2.employees emp ON emp.id=im.confirmed_by
     WHERE im.defect_id=d.id
