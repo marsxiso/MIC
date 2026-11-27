@@ -1052,8 +1052,6 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
     await c.query('BEGIN');
     const cycle=await c.query("SELECT id,card_id FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' FOR UPDATE",[cycleId]);
     if(!cycle.rowCount)throw Object.assign(new Error('Активный производственный цикл не найден'),{status:404});
-    const firstPiece=await c.query("SELECT COALESCE((SELECT first_piece_required FROM mic2.qc_control_schedules WHERE product_id=(SELECT product_id FROM mic2.production_cycles WHERE id=$1)),TRUE) AND NOT EXISTS(SELECT 1 FROM mic2.qc_inspections WHERE cycle_id=$1 AND inspection_type='first_piece') AS pending",[cycleId]);
-    if(firstPiece.rows[0].pending&&good+defective!==1)throw Object.assign(new Error('Первичная проверка должна проводиться по одной первой детали'),{status:400});
     const measurementRows=Array.isArray(b.measurements)?b.measurements:[];
     let validParameters=[];
     if(measurementRows.length){
@@ -1073,7 +1071,7 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
     if(good+defective>available)throw Object.assign(new Error(`Для контроля доступно только ${available} деталей`),{status:409});
     const inspection=await c.query(`
       INSERT INTO mic2.qc_inspections(cycle_id,controller_id,inspection_type,card_id,completed_at,comment)
-      VALUES($1,$2,CASE WHEN COALESCE((SELECT first_piece_required FROM mic2.qc_control_schedules WHERE product_id=(SELECT product_id FROM mic2.production_cycles WHERE id=$1)),TRUE) AND NOT EXISTS(SELECT 1 FROM mic2.qc_inspections WHERE cycle_id=$1 AND inspection_type='first_piece') THEN 'first_piece' ELSE 'scheduled_round' END,$3,now(),$4) RETURNING id
+      VALUES($1,$2,'scheduled_round',$3,now(),$4) RETURNING id
     `,[cycleId,req.employee.id,cycle.rows[0].card_id,comment||null]);
     for(const m of measurementRows){
       await c.query(`
