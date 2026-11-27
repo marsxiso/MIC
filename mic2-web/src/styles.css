@@ -495,12 +495,11 @@ td small{line-height:1.45}
 .reworkTable th,.reworkTable td{padding:13px 14px;vertical-align:middle}
 .reworkTable th:nth-child(1){width:9%}
 .reworkTable th:nth-child(2){width:19%}
-.reworkTable th:nth-child(3){width:32%}
-.reworkTable th:nth-child(4){width:12%}
-.reworkTable th:nth-child(5){width:11%}
-.reworkTable th:nth-child(6){width:17%}
+.reworkTable th:nth-child(3){width:34%}
+.reworkTable th:nth-child(4){width:15%}
+.reworkTable th:nth-child(5){width:23%}
 .reworkTable td:nth-child(3){color:#aebfc3;line-height:1.5;white-space:normal}
-.reworkTable td:nth-child(5){color:#9bd8c5;font-weight:700}
+.reworkTable td:nth-child(4){color:#9bd8c5;font-weight:700}
 .reworkTable td:last-child{white-space:nowrap}
 .reworkTable .smallButton{min-width:112px}
 .reworkTable tbody tr:hover{background:#1b3038}
