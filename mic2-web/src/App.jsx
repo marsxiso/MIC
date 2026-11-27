@@ -125,10 +125,11 @@ function QcShiftCalendar({data,refresh,markAttendance}){
 }
 
 function CncTeamCalendar({data,refresh}){
- const [cursor,setCursor]=useState(()=>new Date()),[view,setView]=useState('month');
+ const [cursor,setCursor]=useState(()=>new Date()),[view,setView]=useState('month'),[jumpToday,setJumpToday]=useState(false);
  const rows=data.shifts||[];
  const fmt=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
  const today=fmt(new Date());
+ useEffect(()=>{if(jumpToday){document.getElementById('cnc-calendar-today')?.scrollIntoView({behavior:'smooth',block:'center'});setJumpToday(false);}},[jumpToday,cursor,view]);
  const first=new Date(cursor.getFullYear(),cursor.getMonth(),1);
  const monthStart=new Date(first);monthStart.setDate(first.getDate()-(first.getDay()+6)%7);
  const weekStart=new Date(cursor);weekStart.setDate(weekStart.getDate()-(weekStart.getDay()+6)%7);
@@ -137,7 +138,7 @@ function CncTeamCalendar({data,refresh}){
  const monthName=cursor.toLocaleDateString('ru-RU',{month:'long',year:'numeric'});
  const move=n=>setCursor(d=>new Date(d.getFullYear(),d.getMonth()+(view==='month'?n:0),d.getDate()+(view==='week'?n*7:0)));
  const statusLabel={pending:'Запланирована',present:'На смене',absent:'Отсутствует',replaced:'Замена',left_early:'Ушёл раньше'};
- return <><div className="section calendarTop"><div><h2>Общий график операторов ЧПУ</h2></div><div className="tableActions"><button className="secondary" onClick={()=>{setCursor(new Date());setView('month');document.getElementById('cnc-calendar-today')?.scrollIntoView({behavior:'smooth',block:'center'});}}>Сегодня</button><button className="secondary" onClick={()=>move(-1)}>←</button><button className="secondary" onClick={()=>move(1)}>→</button><button className="secondary" onClick={refresh}>Обновить ↻</button></div></div>
+ return <><div className="section calendarTop"><div><h2>Общий график операторов ЧПУ</h2></div><div className="tableActions"><button className="secondary" onClick={()=>{setCursor(new Date());setView('month');setJumpToday(true);}}>Сегодня</button><button className="secondary" onClick={()=>move(-1)}>←</button><button className="secondary" onClick={()=>move(1)}>→</button><button className="secondary" onClick={refresh}>Обновить ↻</button></div></div>
  <div className="calendarToolbar"><strong>{monthName}</strong><div className="calendarViews"><button className={view==='month'?'active':''} onClick={()=>setView('month')}>Месяц</button><button className={view==='week'?'active':''} onClick={()=>setView('week')}>Неделя</button></div></div>
  <div className="calendarGrid">{dayNames.map(d=><div className="calendarWeekday" key={d}>{d}</div>)}{days.map(d=>{const key=fmt(d),events=rows.filter(r=>String(r.shift_date).slice(0,10)===key);return <div className={'calendarDay '+(d.getMonth()!==cursor.getMonth()&&view==='month'?'outside ':'')+(key===today?' today':'')} key={key} id={key===today?'cnc-calendar-today':undefined}><div className="calendarDate">{d.getDate()}</div>{events.map(ev=><div className={'shiftEvent '+(ev.shift_code==='night'?'nightShift':'dayShift')} key={ev.id}><b>{ev.shift_code==='night'?'Ночь':'День'}</b><span>{ev.full_name}</span><small>{statusLabel[ev.attendance_status]||ev.attendance_status}</small><small>{ev.shift_code==='night'?'20:00–08:00':'08:00–20:00'}</small></div>)}</div>;})}</div>
  <div className="calendarLegend"><span><i className="legendDay"/>Дневная смена · 08:00–20:00</span><span><i className="legendNight"/>Ночная смена · 20:00–08:00</span></div>
