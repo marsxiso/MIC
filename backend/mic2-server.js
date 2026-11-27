@@ -460,7 +460,7 @@ app.post('/api/qc/my-shifts/:id/attendance', authenticate, requireRoles('qc_cont
   return res.status(400).json({ok:false,message:'Выберите корректный статус явки'});
  if(note.length>500)return res.status(400).json({ok:false,message:'Комментарий не должен превышать 500 символов'});
  if(status==='left_early'&&!note)return res.status(400).json({ok:false,message:'Укажите причину раннего ухода'});
- if(['present','left_early'].includes(status)&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(actualTime))
+ if(['present','left_early'].includes(status)&&!/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(actualTime))
   return res.status(400).json({ok:false,message:status==='present'?'Укажите фактическое время прихода':'Укажите фактическое время ухода'});
  try{
   const r=await pool.query(`
@@ -483,7 +483,7 @@ app.post('/api/cnc/my-shifts/:id/attendance', authenticate, requireRoles('cnc_op
  const id=Number(req.params.id),b=req.body||{};
  const status=typeof b.attendance_status==='string'?b.attendance_status:'';
  const note=typeof b.attendance_note==='string'?b.attendance_note.trim():'';
- const actualTime=typeof b.actual_time==='string'?b.actual_time.trim():'';
+ const actualTime=typeof b.actual_time==='string'&&b.actual_time.trim()?b.actual_time.trim():(status==='present'?'08:00':'');
  if(!Number.isSafeInteger(id)||id<1||!['present','absent','left_early'].includes(status))
   return res.status(400).json({ok:false,message:'Выберите корректный статус явки'});
  if(note.length>500)return res.status(400).json({ok:false,message:'Комментарий не должен превышать 500 символов'});
