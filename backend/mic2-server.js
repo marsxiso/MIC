@@ -632,7 +632,10 @@ app.get('/api/qc/fly-control', authenticate, requirePermission('qc:fly:read'), a
   if(created.rowCount)await pool.query(`INSERT INTO mic2.qc_fly_control_journal(schedule_event_id,action,details)
    SELECT unnest($1::bigint[]),'scheduled','{"source":"automatic_schedule"}'::jsonb`,[created.rows.map(x=>x.id)]);
   const missed=await pool.query(`UPDATE mic2.qc_fly_control_schedule_events SET status='missed',updated_at=now()
-   WHERE status='pending' AND window_end<=now() RETURNING id`);
+   WHERE status='pending' AND window_end<=now()
+    AND NOT EXISTS(SELECT 1 FROM mic2.qc_fly_control_events f JOIN mic2.qc_inspections i ON i.id=f.inspection_id
+      WHERE i.cycle_id=mic2.qc_fly_control_schedule_events.cycle_id AND f.scheduled_for=mic2.qc_fly_control_schedule_events.scheduled_for)
+   RETURNING id`);
   if(missed.rowCount)await pool.query(`INSERT INTO mic2.qc_fly_control_journal(schedule_event_id,action,details)
    SELECT unnest($1::bigint[]),'missed','{"reason":"window_expired_without_inspection"}'::jsonb`,[missed.rows.map(x=>x.id)]);
   const completed=await pool.query(`UPDATE mic2.qc_fly_control_schedule_events se
