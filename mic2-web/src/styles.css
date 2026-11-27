@@ -383,3 +383,20 @@ td small{line-height:1.45}
  .modalShade{padding:10px}
  .modalCard{padding:15px}
 }
+
+/* Final proportion pass for the fly-control workspace */
+.flySchedulePanel{max-width:1180px;margin-right:auto!important;padding:17px 18px 18px}
+.flyScheduleTable{width:100%;max-width:100%}
+.flyScheduleTable table{min-width:700px;table-layout:fixed}
+.flyScheduleTable th{height:34px;padding:9px 10px;font-size:9px;letter-spacing:.07em;white-space:normal;line-height:1.25}
+.flyScheduleTable td{height:46px;padding:10px 11px;font-size:11px}
+.flyScheduleTable th:nth-child(1),.flyScheduleTable td:nth-child(1){width:15%}
+.flyScheduleTable th:nth-child(2),.flyScheduleTable td:nth-child(2){width:9%}
+.flyScheduleTable th:nth-child(3),.flyScheduleTable td:nth-child(3){width:15%}
+.flyScheduleTable th:nth-child(4),.flyScheduleTable td:nth-child(4){width:18%}
+.flyScheduleTable th:nth-child(5),.flyScheduleTable td:nth-child(5){width:16%}
+.flyScheduleTable th:nth-child(6),.flyScheduleTable td:nth-child(6){width:10%}
+.flyScheduleTable th:nth-child(7),.flyScheduleTable td:nth-child(7){width:17%}
+.flySchedulePanel+.tableWrap{max-width:1180px;margin-right:auto}
+.flySchedulePanel+.tableWrap .empty{padding:20px 22px;text-align:left;font-size:11px}
+@media(max-width:760px){.flySchedulePanel{padding:13px 10px}.flySchedulePanel+.tableWrap{max-width:100%}}
