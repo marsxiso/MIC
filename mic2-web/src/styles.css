@@ -250,7 +250,7 @@ button{cursor:pointer}button:disabled{opacity:.55;cursor:wait}.tableActions{disp
 @media(max-width:650px){.qcCartonDetailGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 /* Balanced table alignment: centered headings and compact controls, readable text columns */
-main .tableWrap th{ text-align:center; vertical-align:middle; }
+main .tableWrap th{ text-align:left; vertical-align:middle; }
 main .tableWrap td{ text-align:left; vertical-align:middle; }
 main .tableWrap td:has(.status),
 main .tableWrap td:has(button),
