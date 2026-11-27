@@ -210,3 +210,18 @@ button{cursor:pointer}button:disabled{opacity:.55;cursor:wait}.tableActions{disp
 .qcHomeHeroAction button:hover{background:#3c796a}
 .qcHomeHeroAction .qcHomeSecondaryAction{background:transparent;border-color:#47616a;color:#b6d2ce;font-weight:500}
 @media(max-width:700px){.qcHomeHero{align-items:stretch;flex-direction:column;gap:16px}.qcHomeHeroText{max-width:none}.qcHomeHeroAction{width:auto}.qcHomeHeroAction button{align-self:stretch}}
+
+.qcHomeActionStrip{display:grid;grid-template-columns:minmax(220px,1.2fr) repeat(3,minmax(150px,1fr));gap:10px;margin:0 0 22px}
+.qcHomeActionHeading,.qcHomeActionStrip>button{min-height:82px;border:1px solid var(--line,#29434b);border-radius:13px;background:rgba(25,47,55,.72);padding:14px 16px}
+.qcHomeActionHeading{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.qcHomeActionHeading>b{font-size:13px}.qcHomeActionHeading>small{font-size:10px;color:var(--muted,#8da9b2)}
+.qcHomeRefresh{border:0;background:none;color:#75d8c4;padding:2px 0;font-size:10px;cursor:pointer}
+.qcHomeActionStrip>button{display:flex;align-items:center;gap:10px;text-align:left;color:inherit;cursor:pointer;transition:border-color .15s,transform .15s}
+.qcHomeActionStrip>button:hover{border-color:#5bcbb4;transform:translateY(-1px)}
+.qcHomeActionStrip>button>span:nth-child(2){display:flex;flex-direction:column;gap:5px;flex:1}
+.qcHomeActionStrip>button b{font-size:12px}.qcHomeActionStrip>button small{font-size:10px;color:var(--muted,#8da9b2)}
+.qcHomeActionStrip>button i{font-style:normal;color:#75d8c4}
+.qcHomeTaskDot{width:9px;height:9px;border-radius:50%;background:#5bcbb4;flex:0 0 auto}
+.qcHomeTaskDot.attention{background:#e7ad55;box-shadow:0 0 0 4px rgba(231,173,85,.12)}
+@media(max-width:1050px){.qcHomeActionStrip{grid-template-columns:repeat(2,minmax(0,1fr))}.qcHomeActionHeading{grid-column:1/-1}}
+@media(max-width:600px){.qcHomeActionStrip{grid-template-columns:1fr}.qcHomeActionHeading{grid-column:auto}}
