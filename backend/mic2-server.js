@@ -1070,6 +1070,50 @@ app.post('/api/qc/defects/:id/decisions', authenticate, requirePermission('qc:de
  }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.status)return res.status(e.status).json({ok:false,message:e.message});next(e);}
  finally{c.release();}
 });
+
+app.get('/api/qc/isolator', authenticate, requirePermission('qc:defects:read'), async (_req,res,next)=>{
+ try{
+  const r=await pool.query(`SELECT d.id AS defect_id,d.id,d.cycle_id,d.confirmed_quantity AS received_quantity,d.defect_description,d.confirmed_at,
+   c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,e.full_name AS controller_name,
+   x.quantity,x.movements
+   FROM mic2.defects d
+   JOIN mic2.production_cycles c ON c.id=d.cycle_id
+   JOIN mic2.employees e ON e.id=d.confirmed_by
+   JOIN LATERAL(
+    SELECT GREATEST(COALESCE(SUM(CASE WHEN im.movement_type='in' THEN im.quantity WHEN im.movement_type='out' THEN -im.quantity ELSE 0 END),0),0)::int AS quantity,
+     COALESCE(json_agg(json_build_object('movement_type',im.movement_type,'quantity',im.quantity,'note',im.note,'confirmed_by',emp.full_name) ORDER BY im.id),'[]'::json) AS movements
+    FROM mic2.isolator_movements im
+    LEFT JOIN mic2.employees emp ON emp.id=im.confirmed_by
+    WHERE im.defect_id=d.id
+   ) x ON TRUE
+   WHERE x.quantity>0
+   ORDER BY d.confirmed_at,d.id`);
+  res.json({ok:true,items:r.rows});
+ }catch(e){next(e);}
+});
+app.post('/api/qc/isolator/:id/movements', authenticate, requirePermission('qc:defects:decide'), async (req,res,next)=>{
+ const defectId=Number(req.params.id),quantity=Number(req.body?.quantity),actionType=String(req.body?.action_type||''),note=typeof req.body?.note==='string'?req.body.note.trim():'';
+ const map={good:{to:'good_unboxed',movement:'isolator_to_good'},rework:{to:'rework',movement:'isolator_to_rework'},scrap:{to:'scrapped',movement:'isolator_to_scrap'}};
+ if(!Number.isSafeInteger(defectId)||defectId<1||!Number.isSafeInteger(quantity)||quantity<1||!map[actionType])return res.status(400).json({ok:false,message:'Укажите корректное решение и количество'});
+ const c=await pool.connect();
+ try{
+  await c.query('BEGIN');
+  const d=await c.query('SELECT id,cycle_id,confirmed_quantity FROM mic2.defects WHERE id=$1 FOR UPDATE',[defectId]);
+  if(!d.rowCount)throw Object.assign(new Error('Запись дефекта не найдена'),{status:404});
+  const stock=await c.query("SELECT COALESCE(SUM(CASE WHEN movement_type='in' THEN quantity WHEN movement_type='out' THEN -quantity ELSE 0 END),0)::int AS quantity FROM mic2.isolator_movements WHERE defect_id=$1",[defectId]);
+  const remaining=stock.rows[0].quantity;
+  if(quantity>remaining)throw Object.assign(new Error('В изоляторе осталось '+remaining+' деталей'),{status:409});
+  const m=map[actionType];
+  await c.query("INSERT INTO mic2.isolator_movements(defect_id,movement_type,quantity,confirmed_by,note) VALUES($1,'out',$2,$3,$4)",[defectId,quantity,req.employee.id,note||actionType]);
+  await c.query('INSERT INTO mic2.cycle_quantity_movements(cycle_id,movement_type,from_bucket,to_bucket,quantity,defect_id,entered_by,note) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[d.rows[0].cycle_id,m.movement,'isolator',m.to,quantity,defectId,req.employee.id,note||actionType]);
+  await c.query(`INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,before_data,after_data,reason)
+   VALUES($1,$2,'isolator_disposition','defect',$3,$4::jsonb,$5::jsonb,$6)`,
+   [req.employee.id,req.employee.role_code,defectId,JSON.stringify({isolator_quantity:remaining}),JSON.stringify({action_type:actionType,quantity,remaining_quantity:remaining-quantity}),note||null]);
+  await c.query('COMMIT');
+  res.status(201).json({ok:true,remaining_quantity:remaining-quantity});
+ }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.status)return res.status(e.status).json({ok:false,message:e.message});next(e);}
+ finally{c.release();}
+});
 app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), async (_req,res,next)=>{
   try {
     const r=await pool.query(`
