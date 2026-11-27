@@ -1187,14 +1187,13 @@ app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), asy
         COALESCE(qr.quantity,0)::int AS pending_quantity,0::int AS reserved_defect_quantity,
         COALESCE(qr.quantity,0)::int AS available_quantity,'rework'::text AS source_type,
         MIN(rr.id) AS rework_record_id
-      FROM mic2.rework_records rr
-      JOIN mic2.defects d0 ON d0.id=rr.defect_id
+      FROM mic2.defects d0
+      JOIN LATERAL(SELECT MIN(id) AS id FROM mic2.rework_records WHERE defect_id=d0.id) rr ON rr.id IS NOT NULL
       JOIN mic2.production_cycles c ON c.id=d0.cycle_id
       LEFT JOIN LATERAL(SELECT COALESCE(SUM(CASE WHEN to_bucket='rework_pending_qc' THEN quantity WHEN from_bucket='rework_pending_qc' THEN -quantity ELSE 0 END),0)::int AS quantity
         FROM mic2.cycle_quantity_movements WHERE defect_id=d0.id) qr ON TRUE
       LEFT JOIN LATERAL(SELECT json_agg(json_build_object('id',mp.id,'parameter_name',mp.parameter_name,'installation_no',mp.installation_no,'drawing_dimension',COALESCE(mp.drawing_dimension,mp.nominal_value),'dimension_prefix',mp.dimension_prefix,'upper_deviation',mp.upper_deviation,'lower_deviation',mp.lower_deviation,'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,'unit',mp.unit,'instruction',mp.instruction) ORDER BY mp.sort_order) AS parameters FROM mic2.measurement_parameters mp WHERE mp.card_id=c.card_id) card_params ON TRUE
       WHERE qr.quantity>0
-      GROUP BY c.id,c.product_name_snapshot,c.product_code_snapshot,c.card_id,card_params.parameters,qr.quantity
       ORDER BY cycle_id
     `);
     res.json({ok:true,items:r.rows});
