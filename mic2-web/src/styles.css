@@ -400,3 +400,35 @@ td small{line-height:1.45}
 .flySchedulePanel+.tableWrap{max-width:1180px;margin-right:auto}
 .flySchedulePanel+.tableWrap .empty{padding:20px 22px;text-align:left;font-size:11px}
 @media(max-width:760px){.flySchedulePanel{padding:13px 10px}.flySchedulePanel+.tableWrap{max-width:100%}}
+
+/* Fly-control workspace: use the available canvas, align the grid and reduce dead space */
+.flyPageToolbar{margin-top:8px;margin-bottom:14px;align-items:center}
+.flyPageToolbar>div:first-child p{margin:0;font-size:11px;color:#91a9ad}
+.flyPageToolbar .tableActions{display:flex;gap:9px;align-items:center}
+.flySchedulePanel{width:100%;max-width:none;margin-right:0!important;padding:18px 19px 19px}
+.flySchedulePanel>.section{margin:0 0 13px;align-items:center}
+.flySchedulePanel>.section h3{font-size:15px}
+.flyScheduleTable{width:100%;max-width:none}
+.flyScheduleTable table{width:100%;min-width:760px;table-layout:fixed}
+.flyScheduleTable th{height:36px;padding:10px 12px;text-align:center!important;font-size:10px;letter-spacing:.055em;white-space:nowrap;line-height:1.2}
+.flyScheduleTable td{height:47px;padding:10px 12px;font-size:11px;vertical-align:middle}
+.flyScheduleTable th:nth-child(1),.flyScheduleTable td:nth-child(1){width:14%}
+.flyScheduleTable th:nth-child(2),.flyScheduleTable td:nth-child(2){width:9%}
+.flyScheduleTable th:nth-child(3),.flyScheduleTable td:nth-child(3){width:16%}
+.flyScheduleTable th:nth-child(4),.flyScheduleTable td:nth-child(4){width:17%}
+.flyScheduleTable th:nth-child(5),.flyScheduleTable td:nth-child(5){width:16%}
+.flyScheduleTable th:nth-child(6),.flyScheduleTable td:nth-child(6){width:10%}
+.flyScheduleTable th:nth-child(7),.flyScheduleTable td:nth-child(7){width:18%}
+.flyScheduleTable td:nth-child(3),.flyScheduleTable td:nth-child(4){text-align:left}
+.flyJournal{width:100%;max-width:none;min-height:72px}
+.flyJournalEmpty{display:flex;align-items:center;justify-content:center;gap:7px;min-height:70px;padding:14px 20px;text-align:center}
+.flyJournalEmpty b{font-size:11px;color:#c7d9d8;font-weight:600}
+.flyJournalEmpty span{font-size:10px;color:#829ba2}
+@media(max-width:760px){
+ .flyPageToolbar{align-items:flex-start}
+ .flyPageToolbar .tableActions{width:100%;flex-wrap:wrap}
+ .flySchedulePanel{padding:13px 10px}
+ .flySchedulePanel>.section{align-items:flex-start}
+ .flySchedulePanel>.section>.status{white-space:normal}
+ .flyJournalEmpty{align-items:flex-start;flex-direction:column;text-align:left}
+}
