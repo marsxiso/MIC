@@ -262,3 +262,27 @@ main .tableWrap tbody tr:hover{ background:#1d3038; }
 main .tableWrap td{ font-variant-numeric:tabular-nums; }
 main .tableWrap th{ white-space:nowrap; }
 
+
+/* Fly-control schedule: clear hierarchy and consistent column alignment */
+.flySchedulePanel{padding:18px 20px 20px;background:linear-gradient(145deg,#192c34,#17262e);border:1px solid #36515a;border-radius:15px}
+.flySchedulePanel>.section{margin:0 0 13px;align-items:center}
+.flySchedulePanel>.section h3{font-size:15px;letter-spacing:-.015em}
+.flySchedulePanel>.section p{font-size:11px;line-height:1.5;margin-top:5px}
+.flySchedulePanel>.section>.status{flex-shrink:0}
+.flyScheduleTable{border-radius:11px;background:#14232a}
+.flyScheduleTable table{width:100%;min-width:760px;table-layout:fixed}
+.flyScheduleTable th{padding:13px 12px;text-align:center;font-size:9px;letter-spacing:.09em;background:#1c3038;color:#91aaaF}
+.flyScheduleTable td{padding:14px 12px;font-size:12px;text-align:center;vertical-align:middle;border-bottom:1px solid #293e46}
+.flyScheduleTable th:nth-child(1),.flyScheduleTable td:nth-child(1){width:13%;white-space:nowrap}
+.flyScheduleTable th:nth-child(2),.flyScheduleTable td:nth-child(2){width:9%}
+.flyScheduleTable th:nth-child(3),.flyScheduleTable td:nth-child(3){width:17%;text-align:left}
+.flyScheduleTable th:nth-child(4),.flyScheduleTable td:nth-child(4){width:18%;text-align:left}
+.flyScheduleTable th:nth-child(5),.flyScheduleTable td:nth-child(5){width:17%}
+.flyScheduleTable th:nth-child(6),.flyScheduleTable td:nth-child(6){width:11%;white-space:nowrap}
+.flyScheduleTable th:nth-child(7),.flyScheduleTable td:nth-child(7){width:15%}
+.flyScheduleTable tbody tr{transition:background .15s ease}
+.flyScheduleTable tbody tr:hover{background:#20363e}
+.flyScheduleTable .status{display:inline-flex;align-items:center;justify-content:center;min-height:25px;padding:5px 10px;font-size:10px}
+.flyScheduleTable .smallButton{min-width:104px;padding:8px 11px}
+.flySchedulePanel+.tableWrap>.empty{padding:26px 20px;text-align:center}
+@media(max-width:760px){.flySchedulePanel{padding:14px 12px}.flySchedulePanel>.section{align-items:flex-start;gap:10px}.flySchedulePanel>.section>.status{font-size:9px}.flyScheduleTable td{padding:12px 10px}}
