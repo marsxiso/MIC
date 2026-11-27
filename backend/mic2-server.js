@@ -1056,14 +1056,13 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
     if(firstPiece.rows[0].pending&&good+defective!==1)throw Object.assign(new Error('Первичная проверка должна проводиться по одной первой детали'),{status:400});
     const measurementRows=Array.isArray(b.measurements)?b.measurements:[];
     let validParameters=[];
-    if(cycle.rows[0].card_id){
+    if(measurementRows.length){
+      if(!cycle.rows[0].card_id)throw Object.assign(new Error('Для этого цикла не назначена карта измерений'),{status:400});
       const cardParams=await c.query('SELECT id FROM mic2.measurement_parameters WHERE card_id=$1',[cycle.rows[0].card_id]);
       validParameters=cardParams.rows.map(x=>String(x.id));
-      if(measurementRows.length!==validParameters.length||new Set(measurementRows.map(x=>String(x.parameter_id))).size!==validParameters.length||measurementRows.some(x=>!validParameters.includes(String(x.parameter_id))||typeof x.measured_value!=='string'||!x.measured_value.trim())){
-        throw Object.assign(new Error('Заполните результаты по всем параметрам действующей карты измерений'),{status:400});
+      if(new Set(measurementRows.map(x=>String(x.parameter_id))).size!==measurementRows.length||measurementRows.some(x=>!validParameters.includes(String(x.parameter_id))||typeof x.measured_value!=='string'||!x.measured_value.trim())){
+        throw Object.assign(new Error('Проверьте выбранные размеры: заполните фактические значения'),{status:400});
       }
-    } else if(measurementRows.length){
-      throw Object.assign(new Error('Для этого цикла не назначена карта измерений'),{status:400});
     }
     const balances=await c.query(`
       SELECT
