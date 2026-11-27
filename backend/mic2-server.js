@@ -574,7 +574,7 @@ app.get('/api/qc/production', authenticate, requirePermission('qc:production:rea
     SUM(quantity) FILTER(WHERE bucket='isolator')::int AS isolator_quantity
     FROM mic2.v_cycle_quantity_balances WHERE cycle_id=c.id) bal ON TRUE
    LEFT JOIN mic2.measurement_cards mc ON mc.id=c.card_id
-   LEFT JOIN LATERAL(SELECT json_agg(json_build_object('id',mp.id,'parameter_name',mp.parameter_name,'installation_no',mp.installation_no,'drawing_dimension',COALESCE(mp.drawing_dimension,mp.nominal_value),'upper_deviation',mp.upper_deviation,'lower_deviation',mp.lower_deviation,
+   LEFT JOIN LATERAL(SELECT json_agg(json_build_object('id',mp.id,'parameter_name',mp.parameter_name,'installation_no',mp.installation_no,'drawing_dimension',COALESCE(mp.drawing_dimension,mp.nominal_value),'dimension_prefix',mp.dimension_prefix,'upper_deviation',mp.upper_deviation,'lower_deviation',mp.lower_deviation,
     'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,'unit',mp.unit,
     'instruction',mp.instruction) ORDER BY mp.sort_order) AS parameters
     FROM mic2.measurement_parameters mp WHERE mp.card_id=c.card_id) params ON TRUE
@@ -617,7 +617,7 @@ app.get('/api/qc/fly-control/:id', authenticate, requirePermission('qc:fly:read'
     f.defect_description,f.action_required,f.created_at,i.cycle_id,i.comment,
     c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,''::text AS setup_code_snapshot,
     e.full_name AS controller_name,mc.version_no AS card_version,
-    COALESCE(json_agg(json_build_object('parameter_name',mp.parameter_name,'installation_no',mp.installation_no,'drawing_dimension',COALESCE(mp.drawing_dimension,mp.nominal_value),'upper_deviation',mp.upper_deviation,'lower_deviation',mp.lower_deviation,
+    COALESCE(json_agg(json_build_object('parameter_name',mp.parameter_name,'installation_no',mp.installation_no,'drawing_dimension',COALESCE(mp.drawing_dimension,mp.nominal_value),'dimension_prefix',mp.dimension_prefix,'upper_deviation',mp.upper_deviation,'lower_deviation',mp.lower_deviation,
      'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,'unit',mp.unit,
      'measured_value',mr.measured_value,'comment',mr.comment)
      ORDER BY mp.sort_order) FILTER(WHERE mr.id IS NOT NULL),'[]'::json) AS measurements
@@ -801,7 +801,7 @@ app.get('/api/cycles', authenticate, requirePermission('cycles:read','cycles:own
 
 
 app.get('/api/qc/cards', authenticate, requirePermission('qc:cards:read'), async (_req,res,next)=>{
- try{const cards=await pool.query(`SELECT mc.id,mc.product_id,p.product_code,p.product_name,mc.version_no,mc.source_type,mc.source_file_uri,mc.review_status,mc.created_at,mc.checked_at,creator.full_name AS created_by_name,checker.full_name AS checked_by_name,COALESCE(json_agg(json_build_object('id',mp.id,'sort_order',mp.sort_order,'parameter_name',mp.parameter_name,'installation_no',mp.installation_no,'drawing_dimension',COALESCE(mp.drawing_dimension,mp.nominal_value),'upper_deviation',mp.upper_deviation,'lower_deviation',mp.lower_deviation,'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,'unit',mp.unit,'instruction',mp.instruction) ORDER BY mp.sort_order) FILTER(WHERE mp.id IS NOT NULL),'[]') AS parameters FROM mic2.measurement_cards mc JOIN mic2.products p ON p.id=mc.product_id LEFT JOIN mic2.measurement_parameters mp ON mp.card_id=mc.id LEFT JOIN mic2.employees creator ON creator.id=mc.created_by LEFT JOIN mic2.employees checker ON checker.id=mc.checked_by GROUP BY mc.id,p.product_code,p.product_name,creator.full_name,checker.full_name ORDER BY p.product_name,mc.version_no DESC`);res.json({ok:true,cards:cards.rows});}catch(e){next(e);}
+ try{const cards=await pool.query(`SELECT mc.id,mc.product_id,p.product_code,p.product_name,mc.version_no,mc.source_type,mc.source_file_uri,mc.review_status,mc.created_at,mc.checked_at,creator.full_name AS created_by_name,checker.full_name AS checked_by_name,COALESCE(json_agg(json_build_object('id',mp.id,'sort_order',mp.sort_order,'parameter_name',mp.parameter_name,'installation_no',mp.installation_no,'drawing_dimension',COALESCE(mp.drawing_dimension,mp.nominal_value),'dimension_prefix',mp.dimension_prefix,'upper_deviation',mp.upper_deviation,'lower_deviation',mp.lower_deviation,'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,'unit',mp.unit,'instruction',mp.instruction) ORDER BY mp.sort_order) FILTER(WHERE mp.id IS NOT NULL),'[]') AS parameters FROM mic2.measurement_cards mc JOIN mic2.products p ON p.id=mc.product_id LEFT JOIN mic2.measurement_parameters mp ON mp.card_id=mc.id LEFT JOIN mic2.employees creator ON creator.id=mc.created_by LEFT JOIN mic2.employees checker ON checker.id=mc.checked_by GROUP BY mc.id,p.product_code,p.product_name,creator.full_name,checker.full_name ORDER BY p.product_name,mc.version_no DESC`);res.json({ok:true,cards:cards.rows});}catch(e){next(e);}
 });
 app.post('/api/qc/cards', authenticate, requirePermission('qc:cards:write'), async(req,res,next)=>{
  const b=req.body||{},productId=Number(b.product_id),parameters=Array.isArray(b.parameters)?b.parameters:[];
@@ -809,7 +809,7 @@ app.post('/api/qc/cards', authenticate, requirePermission('qc:cards:write'), asy
  const c=await pool.connect();try{await c.query('BEGIN');const p=await c.query('SELECT id FROM mic2.products WHERE id=$1 AND is_active FOR UPDATE',[productId]);if(!p.rowCount)throw Object.assign(new Error('Активное изделие не найдено'),{status:404});
  const v=await c.query('SELECT COALESCE(MAX(version_no),0)+1 AS n FROM mic2.measurement_cards WHERE product_id=$1',[productId]);
  const card=await c.query("INSERT INTO mic2.measurement_cards(product_id,version_no,source_type,review_status,created_by) VALUES($1,$2,'manual','draft',$3) RETURNING id,product_id,version_no,review_status",[productId,v.rows[0].n,req.employee.id]);
- for(let i=0;i<parameters.length;i++){const x=parameters[i];const dimension=x.drawing_dimension.trim();await c.query('INSERT INTO mic2.measurement_parameters(card_id,sort_order,parameter_name,nominal_value,tolerance_text,unit,instruction,installation_no,drawing_dimension,upper_deviation,lower_deviation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',[card.rows[0].id,i+1,dimension,null,null,x.unit||null,x.instruction||null,Number(x.installation_no),dimension,x.upper_deviation?.trim()||null,x.lower_deviation?.trim()||null]);}
+ for(let i=0;i<parameters.length;i++){const x=parameters[i];const dimension=x.drawing_dimension.trim();await c.query('INSERT INTO mic2.measurement_parameters(card_id,sort_order,parameter_name,nominal_value,tolerance_text,unit,instruction,installation_no,drawing_dimension,dimension_prefix,upper_deviation,lower_deviation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',[card.rows[0].id,i+1,dimension,null,null,x.unit||null,x.instruction||null,Number(x.installation_no),dimension,['','Ø','М'].includes(x.dimension_prefix)?x.dimension_prefix:'',x.upper_deviation?.trim()||null,x.lower_deviation?.trim()||null]);}
  await c.query('COMMIT');res.status(201).json({ok:true,card:card.rows[0]});
  }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.status)return res.status(e.status).json({ok:false,message:e.message});next(e);}finally{c.release();}
 });
@@ -862,7 +862,7 @@ app.get('/api/qc/history/:id', authenticate, requirePermission('qc:own:read','qc
         e.full_name AS controller_name,c.bin_id,c.product_name_snapshot,''::text AS setup_code_snapshot,
         mc.version_no AS card_version,
         COALESCE(json_agg(json_build_object(
-          'parameter_name',mp.parameter_name,'installation_no',mp.installation_no,'drawing_dimension',COALESCE(mp.drawing_dimension,mp.nominal_value),'upper_deviation',mp.upper_deviation,'lower_deviation',mp.lower_deviation,'nominal_value',mp.nominal_value,
+          'parameter_name',mp.parameter_name,'installation_no',mp.installation_no,'drawing_dimension',COALESCE(mp.drawing_dimension,mp.nominal_value),'dimension_prefix',mp.dimension_prefix,'upper_deviation',mp.upper_deviation,'lower_deviation',mp.lower_deviation,'nominal_value',mp.nominal_value,
           'tolerance_text',mp.tolerance_text,'unit',mp.unit,
           'measured_value',mr.measured_value,'comment',mr.comment
         ) ORDER BY mp.sort_order) FILTER(WHERE mr.id IS NOT NULL),'[]') AS measurements
@@ -939,7 +939,7 @@ app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), asy
       JOIN mic2.employees e ON e.id=c.responsible_employee_id
       LEFT JOIN mic2.v_cycle_quantity_balances q ON q.cycle_id=c.id AND q.bucket='production_pending_qc'
       LEFT JOIN LATERAL (
-        SELECT json_agg(json_build_object('id',mp.id,'parameter_name',mp.parameter_name,'installation_no',mp.installation_no,'drawing_dimension',COALESCE(mp.drawing_dimension,mp.nominal_value),'upper_deviation',mp.upper_deviation,'lower_deviation',mp.lower_deviation,
+        SELECT json_agg(json_build_object('id',mp.id,'parameter_name',mp.parameter_name,'installation_no',mp.installation_no,'drawing_dimension',COALESCE(mp.drawing_dimension,mp.nominal_value),'dimension_prefix',mp.dimension_prefix,'upper_deviation',mp.upper_deviation,'lower_deviation',mp.lower_deviation,
           'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,'unit',mp.unit,
           'instruction',mp.instruction) ORDER BY mp.sort_order) AS parameters
         FROM mic2.measurement_parameters mp
