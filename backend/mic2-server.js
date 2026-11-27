@@ -579,7 +579,7 @@ app.get('/api/qc/production', authenticate, requirePermission('qc:production:rea
     'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,'unit',mp.unit,
     'instruction',mp.instruction) ORDER BY mp.sort_order) AS parameters
     FROM mic2.measurement_parameters mp WHERE mp.card_id=c.card_id) params ON TRUE
-   WHERE c.cycle_status='active'
+   WHERE c.cycle_status='active' AND c.production_finished_at IS NULL
    ORDER BY c.started_at,c.bin_id
   `);
   res.json({ok:true,cycles:r.rows});
@@ -654,7 +654,7 @@ app.get('/api/qc/fly-control/:id', authenticate, requirePermission('qc:fly:read'
    LEFT JOIN mic2.measurement_cards mc ON mc.id=i.card_id
    LEFT JOIN mic2.qc_measurement_results mr ON mr.inspection_id=i.id
    LEFT JOIN mic2.measurement_parameters mp ON mp.id=mr.parameter_id
-   WHERE f.id=$1 AND (NOT $2 OR i.controller_id=$3) AND c.cycle_status='active' AND c.production_finished_at IS NULL
+   WHERE f.id=$1 AND (NOT $2 OR i.controller_id=$3)
    GROUP BY f.id,i.id,c.id,e.full_name,mc.version_no
   `,[id,ownOnly,req.employee.id]);
   if(!r.rowCount)return res.status(404).json({ok:false,message:'Летучая проверка не найдена'});
