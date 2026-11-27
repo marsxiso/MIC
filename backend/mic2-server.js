@@ -1186,7 +1186,7 @@ app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), asy
         COALESCE(card_params.parameters,'[]'::json) AS measurement_parameters,
         COALESCE(qr.quantity,0)::int AS pending_quantity,0::int AS reserved_defect_quantity,
         COALESCE(qr.quantity,0)::int AS available_quantity,'rework'::text AS source_type,
-        MIN(rr.id) AS rework_record_id
+        rr.id AS rework_record_id
       FROM mic2.defects d0
       JOIN LATERAL(SELECT MIN(id) AS id FROM mic2.rework_records WHERE defect_id=d0.id) rr ON rr.id IS NOT NULL
       JOIN mic2.production_cycles c ON c.id=d0.cycle_id
