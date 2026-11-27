@@ -686,8 +686,8 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
  finally{c.release();}
 });
 
-app.get('/api/products', authenticate, requirePermission('products:read'), async (_req,res,next)=>{
-  try { const r=await pool.query("SELECT p.id,p.product_code,p.product_name,p.description,p.box_quantity_norm,COALESCE((SELECT json_agg(json_build_object('id',d.id,'version_no',d.version_no,'original_filename',d.original_filename,'file_uri',d.file_uri,'is_current',d.is_current) ORDER BY d.version_no DESC) FROM mic2.product_drawings d WHERE d.product_id=p.id),'[]') AS drawings FROM mic2.products p WHERE p.is_active ORDER BY p.product_name");res.json({ok:true,products:r.rows}); } catch(e){next(e);}
+app.get('/api/products', authenticate, requirePermission('products:read'), async (req,res,next)=>{
+  try { const r=await pool.query("SELECT p.id,p.product_code,p.product_name,p.description,p.box_quantity_norm,p.is_active,COALESCE((SELECT json_agg(json_build_object('id',d.id,'version_no',d.version_no,'original_filename',d.original_filename,'file_uri',d.file_uri,'is_current',d.is_current) ORDER BY d.version_no DESC) FROM mic2.product_drawings d WHERE d.product_id=p.id),'[]') AS drawings FROM mic2.products p WHERE p.is_active OR $1 ORDER BY p.is_active DESC,p.product_name",[req.employee.role_code==='administrator']);res.json({ok:true,products:r.rows}); } catch(e){next(e);}
 });
 
 
@@ -755,6 +755,18 @@ app.post('/api/admin/accounts', authenticate, requirePermission('accounts:create
     );
     res.status(201).json({ok:true,employee:r.rows[0]});
   }catch(e){if(e.code==='23505')return res.status(409).json({ok:false,message:'Такой логин уже существует'});next(e);}
+});
+
+app.put('/api/products/:id', authenticate, requirePermission('products:write'), async(req,res,next)=>{
+ const id=Number(req.params.id),b=req.body||{},norm=Number(b.box_quantity_norm);
+ if(!Number.isSafeInteger(id)||id<1||!b.product_code?.trim()||!b.product_name?.trim()||!Number.isInteger(norm)||norm<1)return res.status(400).json({ok:false,message:'Заполните код, наименование и норму деталей в коробке'});
+ try{
+  const before=await pool.query('SELECT id,product_code,product_name,description,box_quantity_norm,is_active FROM mic2.products WHERE id=$1',[id]);
+  if(!before.rowCount)return res.status(404).json({ok:false,message:'Изделие не найдено'});
+  const updated=await pool.query('UPDATE mic2.products SET product_code=$2,product_name=$3,description=$4,box_quantity_norm=$5 WHERE id=$1 RETURNING id,product_code,product_name,description,box_quantity_norm,is_active',[id,b.product_code.trim(),b.product_name.trim(),b.description?.trim()||null,norm]);
+  await pool.query("INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,before_data,after_data) VALUES($1,$2,'product_updated','product',$3,$4::jsonb,$5::jsonb)",[req.employee.id,req.employee.role_code,id,JSON.stringify(before.rows[0]),JSON.stringify(updated.rows[0])]);
+  res.json({ok:true,product:updated.rows[0]});
+ }catch(e){if(e.code==='23505')return res.status(409).json({ok:false,message:'Такой код изделия уже используется'});next(e);}
 });
 
 app.post('/api/products', authenticate, requirePermission('products:write'), async (req,res,next)=>{
