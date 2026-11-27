@@ -1251,6 +1251,7 @@ app.post('/api/qc/finished-boxes/:boxId/refill', authenticate, requirePermission
   if(!box.rowCount)throw Object.assign(new Error('Коробка не найдена'),{status:404});
   const b=box.rows[0];
   if(b.closed_at)throw Object.assign(new Error('Закрытую коробку нельзя дозаполнять'),{status:409});
+  if(Number(b.quantity)>=Number(b.box_norm_snapshot))throw Object.assign(new Error('Коробка уже полностью сформирована. Дозаполнение доступно только для неполных коробок.'),{status:409});
   if(!b.cycle_id)throw Object.assign(new Error('Для коробки не указан исходный производственный цикл'),{status:409});
   const free=Math.max(0,Number(b.box_norm_snapshot)-Number(b.quantity));
   if(requested>free)throw Object.assign(new Error('Количество превышает свободное место в коробке: '+free+' шт.'),{status:409});
