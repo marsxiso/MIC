@@ -590,23 +590,22 @@ app.get('/api/qc/control-schedules', authenticate, requirePermission('accounts:c
  try{
   const r=await pool.query(`SELECT p.id AS product_id,p.product_code,p.product_name,
    COALESCE(s.first_piece_required,TRUE) AS first_piece_required,
-   COALESCE(s.fly_interval_quantity,100) AS fly_interval_quantity
+   '08:00'::text AS fly_control_start_time,3::int AS fly_control_interval_hours
    FROM mic2.products p LEFT JOIN mic2.qc_control_schedules s ON s.product_id=p.id
    WHERE p.is_active ORDER BY p.product_name`);
   res.json({ok:true,schedules:r.rows});
  }catch(e){next(e);}
 });
 app.put('/api/qc/control-schedules/:productId', authenticate, requirePermission('accounts:create'), async(req,res,next)=>{
- const productId=Number(req.params.productId),b=req.body||{},interval=Number(b.fly_interval_quantity);
- if(!Number.isSafeInteger(productId)||productId<1||!Number.isSafeInteger(interval)||interval<0||interval>1000000||typeof b.first_piece_required!=='boolean')
+ const productId=Number(req.params.productId),b=req.body||{};
+ if(!Number.isSafeInteger(productId)||productId<1||typeof b.first_piece_required!=='boolean')
   return res.status(400).json({ok:false,message:'Укажите корректные параметры контроля'});
  try{
   const p=await pool.query('SELECT id FROM mic2.products WHERE id=$1 AND is_active',[productId]);
   if(!p.rowCount)return res.status(404).json({ok:false,message:'Изделие не найдено'});
-  const r=await pool.query(`INSERT INTO mic2.qc_control_schedules(product_id,first_piece_required,fly_interval_quantity,updated_by,updated_at)
-   VALUES($1,$2,$3,$4,now()) ON CONFLICT(product_id) DO UPDATE SET first_piece_required=EXCLUDED.first_piece_required,
-   fly_interval_quantity=EXCLUDED.fly_interval_quantity,updated_by=EXCLUDED.updated_by,updated_at=now()
-   RETURNING product_id,first_piece_required,fly_interval_quantity`,[productId,b.first_piece_required,interval,req.employee.id]);
+  const r=await pool.query(`INSERT INTO mic2.qc_control_schedules(product_id,first_piece_required,updated_by,updated_at)
+   VALUES($1,$2,$3,now()) ON CONFLICT(product_id) DO UPDATE SET first_piece_required=EXCLUDED.first_piece_required,
+   updated_by=EXCLUDED.updated_by,updated_at=now()`,[productId,b.first_piece_required,req.employee.id]);
   res.json({ok:true,schedule:r.rows[0]});
  }catch(e){next(e);}
 });
@@ -679,10 +678,13 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
  const c=await pool.connect();
  try{
   await c.query('BEGIN');
-  const cycle=await c.query("SELECT pc.id,pc.card_id,(SELECT COALESCE(SUM(quantity),0)::int FROM mic2.production_output_entries WHERE cycle_id=pc.id) AS output_quantity,COALESCE(s.fly_interval_quantity,100)::int AS fly_interval_quantity,COALESCE((SELECT f.output_quantity_at_check FROM mic2.qc_fly_control_events f JOIN mic2.qc_inspections qi ON qi.id=f.inspection_id WHERE qi.cycle_id=pc.id ORDER BY f.created_at DESC LIMIT 1),0)::int AS last_fly_output FROM mic2.production_cycles pc LEFT JOIN mic2.qc_control_schedules s ON s.product_id=pc.product_id WHERE pc.id=$1 AND pc.cycle_status='active' AND pc.production_finished_at IS NULL FOR UPDATE OF pc",[cycleId]);
+  const cycle=await c.query("SELECT pc.id,pc.card_id,COALESCE((SELECT sa.ends_at FROM mic2.shift_assignments sa WHERE sa.employee_id=pc.responsible_employee_id AND sa.shift_date=CURRENT_DATE ORDER BY sa.ends_at DESC NULLS LAST LIMIT 1),date_trunc('day',now())+interval '20 hours') AS shift_ends_at,date_trunc('day',now())+interval '8 hours'+floor(GREATEST(0,extract(epoch FROM (now()-(date_trunc('day',now())+interval '8 hours')))/10800))*interval '3 hours' AS current_fly_slot FROM mic2.production_cycles pc WHERE pc.id=$1 AND pc.cycle_status='active' AND pc.production_finished_at IS NULL FOR UPDATE OF pc",[cycleId]);
   if(!cycle.rowCount)throw Object.assign(new Error('Активный производственный цикл не найден'),{status:404});
   if(sample>cycle.rows[0].output_quantity)throw Object.assign(new Error('Размер выборки не может превышать выпущенное количество деталей'),{status:409});
-  if(cycle.rows[0].fly_interval_quantity===0||cycle.rows[0].output_quantity<cycle.rows[0].last_fly_output+cycle.rows[0].fly_interval_quantity)throw Object.assign(new Error('Летучий контроль ещё не наступил по графику для этого изделия'),{status:409});
+  const slot=cycle.rows[0].current_fly_slot;
+  if(Date.now()<new Date(slot).getTime()||new Date(slot).getHours()<8||new Date(slot)>=new Date(cycle.rows[0].shift_ends_at))throw Object.assign(new Error('Летучий контроль проводится по расписанию: в 08:00 и далее каждые 3 часа до конца смены'),{status:409});
+  const already=await c.query('SELECT 1 FROM mic2.qc_fly_control_events f JOIN mic2.qc_inspections qi ON qi.id=f.inspection_id WHERE qi.cycle_id=$1 AND f.scheduled_for=$2 LIMIT 1',[cycleId,slot]);
+  if(already.rowCount)throw Object.assign(new Error('Летучий контроль за этот временной интервал уже проведён'),{status:409});
   if(defectQty>0&&!description)throw Object.assign(new Error('Опишите обнаруженное несоответствие'),{status:400});
   const cardId=cycle.rows[0].card_id;
   const valid=cardId?await c.query('SELECT id FROM mic2.measurement_parameters WHERE card_id=$1 AND installation_no=$2',[cardId,installationNo]):{rows:[]};
@@ -699,9 +701,9 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
    VALUES($1,$2,$3,$4)
   `,[inspection.rows[0].id,Number(m.parameter_id),m.measured_value.trim(),m.comment||null]);
   const event=await c.query(`
-   INSERT INTO mic2.qc_fly_control_events(inspection_id,sample_quantity,inspection_result,defect_quantity,defect_description,action_required)
-   VALUES($1,$2,$3,$4,$5,$6) RETURNING id
-  `,[inspection.rows[0].id,sample,result,defectQty,description||null,actionRequired||result==='fail',cycle.rows[0].output_quantity]);
+   INSERT INTO mic2.qc_fly_control_events(inspection_id,sample_quantity,inspection_result,defect_quantity,defect_description,action_required,scheduled_for)
+   VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id
+  `,[inspection.rows[0].id,sample,result,defectQty,description||null,actionRequired||result==='fail',slot]);
   await c.query(`
    INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,after_data,reason)
    VALUES($1,$2,'qc_fly_control','qc_inspection',$3,$4::jsonb,$5)
