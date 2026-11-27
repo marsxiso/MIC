@@ -663,12 +663,12 @@ app.get('/api/qc/fly-control/:id', authenticate, requirePermission('qc:fly:read'
 });
 
 app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'), async(req,res,next)=>{
- const b=req.body||{},cycleId=Number(b.cycle_id),sample=Number(b.sample_quantity),
+ const b=req.body||{},cycleId=Number(b.cycle_id),sample=Number(b.sample_quantity),installationNo=Number(b.installation_no),
   defectQty=Number(b.defect_quantity||0),result=String(b.inspection_result||''),
   description=typeof b.defect_description==='string'?b.defect_description.trim():'',
   actionRequired=Boolean(b.action_required),comment=typeof b.comment==='string'?b.comment.trim():'';
  const measurements=Array.isArray(b.measurements)?b.measurements:[];
- if(!Number.isSafeInteger(cycleId)||cycleId<1||!Number.isSafeInteger(sample)||sample<1||
+ if(!Number.isSafeInteger(cycleId)||cycleId<1||!Number.isSafeInteger(installationNo)||installationNo<1||!Number.isSafeInteger(sample)||sample<1||
   !Number.isSafeInteger(defectQty)||defectQty<0||defectQty>sample||
   !['pass','fail','observation'].includes(result)||
   (result==='fail'&&(defectQty<1||!description))||
@@ -685,10 +685,10 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
   if(cycle.rows[0].fly_interval_quantity===0||cycle.rows[0].output_quantity<cycle.rows[0].last_fly_output+cycle.rows[0].fly_interval_quantity)throw Object.assign(new Error('Летучий контроль ещё не наступил по графику для этого изделия'),{status:409});
   if(defectQty>0&&!description)throw Object.assign(new Error('Опишите обнаруженное несоответствие'),{status:400});
   const cardId=cycle.rows[0].card_id;
-  const valid=cardId?await c.query('SELECT id FROM mic2.measurement_parameters WHERE card_id=$1',[cardId]):{rows:[]};
+  const valid=cardId?await c.query('SELECT id FROM mic2.measurement_parameters WHERE card_id=$1 AND installation_no=$2',[cardId,installationNo]):{rows:[]};
   const validIds=valid.rows.map(x=>String(x.id));
   if(measurements.some(m=>!validIds.includes(String(m.parameter_id))||typeof m.measured_value!=='string'||!m.measured_value.trim()))
-   throw Object.assign(new Error('В измерениях есть параметры не из карты этого производственного цикла'),{status:400});
+   throw Object.assign(new Error('В измерениях есть параметры не из выбранной установки карты этого ящика'),{status:400});
   if(measurements.length&&!cardId)throw Object.assign(new Error('Для этого цикла не назначена карта измерений'),{status:400});
   const inspection=await c.query(`
    INSERT INTO mic2.qc_inspections(cycle_id,controller_id,inspection_type,card_id,completed_at,comment)
@@ -706,7 +706,7 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
    INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,after_data,reason)
    VALUES($1,$2,'qc_fly_control','qc_inspection',$3,$4::jsonb,$5)
   `,[req.employee.id,req.employee.role_code,inspection.rows[0].id,
-   JSON.stringify({cycle_id:cycleId,sample_quantity:sample,inspection_result:result,defect_quantity:defectQty,action_required:actionRequired||result==='fail'}),comment||description||null]);
+   JSON.stringify({cycle_id:cycleId,installation_no:installationNo,sample_quantity:sample,inspection_result:result,defect_quantity:defectQty,action_required:actionRequired||result==='fail'}),comment||description||null]);
   await c.query('COMMIT');
   res.status(201).json({ok:true,inspection_id:inspection.rows[0].id,event_id:event.rows[0].id});
  }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.status)return res.status(e.status).json({ok:false,message:e.message});next(e);}
