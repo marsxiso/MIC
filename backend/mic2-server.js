@@ -1152,7 +1152,9 @@ app.get('/api/qc/finished-boxes', authenticate, requirePermission('qc:queue:read
    FROM mic2.production_cycles c JOIN mic2.products p ON p.id=c.product_id
    JOIN mic2.employees e ON e.id=c.responsible_employee_id
    JOIN mic2.v_cycle_quantity_balances q ON q.cycle_id=c.id AND q.bucket='good_unboxed' AND q.quantity>0
-   WHERE c.cycle_status='active' ORDER BY c.started_at
+   WHERE c.cycle_status='active'
+    AND EXISTS(SELECT 1 FROM mic2.qc_inspections qi WHERE qi.cycle_id=c.id AND qi.inspection_type='scheduled_round' AND qi.completed_at IS NOT NULL)
+   ORDER BY c.started_at
   `);
   res.json({ok:true,boxes:r.rows,packable_cycles:pending.rows});
  }catch(e){next(e);}
@@ -1173,7 +1175,7 @@ app.post('/api/qc/finished-boxes/pack/:cycleId', authenticate, requirePermission
   if(!cycle.rowCount)throw Object.assign(new Error('Активный производственный цикл не найден'),{status:404});
   const latest=await c.query(`
    SELECT id FROM mic2.qc_inspections
-   WHERE cycle_id=$1 AND completed_at IS NOT NULL
+   WHERE cycle_id=$1 AND inspection_type='scheduled_round' AND completed_at IS NOT NULL
    ORDER BY completed_at DESC,id DESC LIMIT 1
   `,[cycleId]);
   if(!latest.rowCount)throw Object.assign(new Error('Сначала должна быть проведена проверка ОТК'),{status:409});
@@ -1260,7 +1262,7 @@ app.post('/api/qc/finished-boxes/:boxId/refill', authenticate, requirePermission
   const balance=await c.query("SELECT COALESCE(quantity,0)::int AS quantity FROM mic2.v_cycle_quantity_balances WHERE cycle_id=$1 AND bucket='good_unboxed'",[b.cycle_id]);
   const available=Number(balance.rows[0]?.quantity||0);
   if(requested>available)throw Object.assign(new Error('Доступно только '+available+' годных деталей для дозаполнения'),{status:409});
-  const inspection=await c.query("SELECT id FROM mic2.qc_inspections WHERE cycle_id=$1 AND completed_at IS NOT NULL ORDER BY completed_at DESC,id DESC LIMIT 1",[b.cycle_id]);
+  const inspection=await c.query("SELECT id FROM mic2.qc_inspections WHERE cycle_id=$1 AND inspection_type='scheduled_round' AND completed_at IS NOT NULL ORDER BY completed_at DESC,id DESC LIMIT 1",[b.cycle_id]);
   if(!inspection.rowCount)throw Object.assign(new Error('Нет завершённой проверки ОТК'),{status:409});
   await c.query(`INSERT INTO mic2.finished_box_additions(box_id,quantity,added_by,note)
     VALUES($1,$2,$3,$4)`,[boxId,requested,req.employee.id,'Дозаполнение коробки ОТК; проверка '+inspection.rows[0].id]);
