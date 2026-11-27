@@ -668,3 +668,50 @@ main>header h1{margin:0;font-size:25px;line-height:1.2;font-weight:800;letter-sp
  .modalCard{padding:16px}
  .qcHomeHero{padding:20px}
 }
+
+
+/* MIC layout correction: balanced responsive grids and consistent rhythm */
+main{width:100%;max-width:none;min-width:0}
+main>*{min-width:0}
+main>header{width:100%;display:flex;justify-content:space-between;align-items:center;gap:18px}
+main>header>div:first-child{flex:1;min-width:0}
+main>header h1{font-size:clamp(21px,1.45vw,27px);line-height:1.25}
+.metrics,.metrics.compact,.operatorStats{
+ display:grid;
+ grid-template-columns:repeat(auto-fit,minmax(min(100%,245px),1fr));
+ align-items:stretch;
+ width:100%;
+ gap:13px;
+}
+.metrics>.metric{width:100%;min-width:0}
+.metrics.compact{grid-template-columns:repeat(auto-fit,minmax(min(100%,245px),1fr))}
+.metric{min-height:94px;display:flex;flex-direction:column;justify-content:center}
+.metric strong{font-size:clamp(25px,1.8vw,31px)}
+.section{width:100%;min-width:0}
+.tiles{width:100%;grid-template-columns:repeat(auto-fit,minmax(min(100%,235px),1fr));align-items:stretch}
+.tile{width:100%;min-width:0;min-height:104px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:8px}
+.tile i{margin:0;font-size:22px;line-height:1.1}
+.tile b{font-size:12px;line-height:1.45}
+.tableWrap{width:100%;max-width:100%}
+.qcHome{width:100%;display:flex;flex-direction:column;gap:15px}
+.qcHomeHero{width:100%;min-height:190px}
+.qcHomeActionStrip{width:100%}
+.qcHomeActionStrip>*{min-width:0}
+.qcHome .section{margin-top:22px}
+.profile{flex-shrink:0}
+@media(min-width:1500px){
+ main{padding-left:clamp(28px,2.4vw,48px);padding-right:clamp(28px,2.4vw,48px)}
+ .tiles{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+@media(max-width:1100px){
+ .tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media(max-width:760px){
+ .metrics,.metrics.compact,.operatorStats{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:480px){
+ .metrics,.metrics.compact,.operatorStats,.tiles{grid-template-columns:minmax(0,1fr)}
+ main>header{align-items:flex-start}
+ .profile{gap:6px}
+}
