@@ -632,12 +632,23 @@ app.get('/api/qc/fly-control', authenticate, requirePermission('qc:fly:read'), a
   if(created.rowCount)await pool.query(`INSERT INTO mic2.qc_fly_control_journal(schedule_event_id,action,details)
    SELECT unnest($1::bigint[]),'scheduled','{"source":"automatic_schedule"}'::jsonb`,[created.rows.map(x=>x.id)]);
   const missed=await pool.query(`UPDATE mic2.qc_fly_control_schedule_events SET status='missed',updated_at=now()
-   WHERE status='pending' AND window_end<=now()
+   WHERE status IN ('pending','scheduled') AND window_end<=now()
     AND NOT EXISTS(SELECT 1 FROM mic2.qc_fly_control_events f JOIN mic2.qc_inspections i ON i.id=f.inspection_id
       WHERE i.cycle_id=mic2.qc_fly_control_schedule_events.cycle_id AND f.scheduled_for=mic2.qc_fly_control_schedule_events.scheduled_for)
    RETURNING id`);
   if(missed.rowCount)await pool.query(`INSERT INTO mic2.qc_fly_control_journal(schedule_event_id,action,details)
    SELECT unnest($1::bigint[]),'missed','{"reason":"window_expired_without_inspection"}'::jsonb`,[missed.rows.map(x=>x.id)]);
+  // Activate only the next due interval after every earlier interval is closed.
+  await pool.query(`UPDATE mic2.qc_fly_control_schedule_events current_event
+   SET status='pending',updated_at=now()
+   WHERE current_event.status='scheduled'
+    AND current_event.scheduled_for<=now() AND current_event.window_end>now()
+    AND NOT EXISTS(
+     SELECT 1 FROM mic2.qc_fly_control_schedule_events previous_event
+     WHERE previous_event.cycle_id=current_event.cycle_id
+      AND previous_event.scheduled_for<current_event.scheduled_for
+      AND previous_event.status NOT IN ('completed','missed')
+    )`);
   const completed=await pool.query(`UPDATE mic2.qc_fly_control_schedule_events se
    SET status='completed',completed_inspection_id=i.id,updated_at=now()
    FROM mic2.qc_fly_control_events f JOIN mic2.qc_inspections i ON i.id=f.inspection_id
@@ -661,7 +672,7 @@ app.get('/api/qc/fly-control', authenticate, requirePermission('qc:fly:read'), a
     LEFT JOIN mic2.qc_inspections i ON i.id=se.completed_inspection_id LEFT JOIN mic2.employees qc ON qc.id=i.controller_id
     LEFT JOIN mic2.qc_fly_control_events f ON f.inspection_id=i.id
     WHERE se.scheduled_for::date=CURRENT_DATE AND (c.cycle_status='active' OR se.status IN ('missed','completed'))
-    ORDER BY se.scheduled_for DESC,c.bin_id`),
+    ORDER BY se.scheduled_for ASC,c.bin_id`),
    pool.query(`SELECT j.id,j.action,j.details,j.created_at,se.scheduled_for,se.cycle_id,c.bin_id,c.product_name_snapshot,e.full_name AS actor_name
     FROM mic2.qc_fly_control_journal j JOIN mic2.qc_fly_control_schedule_events se ON se.id=j.schedule_event_id
     JOIN mic2.production_cycles c ON c.id=se.cycle_id LEFT JOIN mic2.employees e ON e.id=j.actor_id
@@ -724,6 +735,32 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
   const slot=cycle.rows[0].current_fly_slot;
   const slotCheck=await c.query('SELECT now()>=$1::timestamptz AND $1::timestamptz<$2::timestamptz AS allowed',[slot,cycle.rows[0].shift_ends_at]);
   if(!slotCheck.rows[0].allowed)throw Object.assign(new Error('Летучий контроль проводится по расписанию: в 08:00 и далее каждые 3 часа до конца смены'),{status:409});
+  // Ensure all expected slots exist even if the client calls this endpoint directly.
+  await c.query(`INSERT INTO mic2.qc_fly_control_schedule_events(cycle_id,scheduled_for,window_end,status)
+   SELECT $1,g.slot,LEAST(g.slot+interval '3 hours',$2::timestamptz),'scheduled'
+   FROM generate_series(date_trunc('day',now())+interval '8 hours',$2::timestamptz-interval '1 microsecond',interval '3 hours') g(slot)
+   WHERE $2::timestamptz>date_trunc('day',now())+interval '8 hours'
+   ON CONFLICT(cycle_id,scheduled_for) DO NOTHING`,[cycleId,cycle.rows[0].shift_ends_at]);
+  // Close expired earlier slots, then refuse to skip any interval still open.
+  await c.query(`UPDATE mic2.qc_fly_control_schedule_events
+   SET status='missed',updated_at=now()
+   WHERE cycle_id=$1 AND scheduled_for<$2 AND status IN ('pending','scheduled')
+    AND window_end<=now()
+    AND NOT EXISTS(SELECT 1 FROM mic2.qc_fly_control_events f JOIN mic2.qc_inspections i ON i.id=f.inspection_id
+     WHERE i.cycle_id=mic2.qc_fly_control_schedule_events.cycle_id
+      AND f.scheduled_for=mic2.qc_fly_control_schedule_events.scheduled_for)`,[cycleId,slot]);
+  const previousOpen=await c.query(`SELECT scheduled_for FROM mic2.qc_fly_control_schedule_events
+   WHERE cycle_id=$1 AND scheduled_for<$2 AND status NOT IN ('completed','missed')
+   ORDER BY scheduled_for LIMIT 1`,[cycleId,slot]);
+  if(previousOpen.rowCount)throw Object.assign(new Error('Сначала закройте предыдущий интервал летучего контроля'),{status:409});
+  const currentEvent=await c.query(`INSERT INTO mic2.qc_fly_control_schedule_events(cycle_id,scheduled_for,window_end,status)
+   VALUES($1,$2,LEAST($2::timestamptz+interval '3 hours',$3::timestamptz),'pending')
+   ON CONFLICT(cycle_id,scheduled_for) DO UPDATE
+    SET status=CASE WHEN mic2.qc_fly_control_schedule_events.status='scheduled' THEN 'pending'
+                    ELSE mic2.qc_fly_control_schedule_events.status END,
+        updated_at=now()
+   RETURNING status`,[cycleId,slot,cycle.rows[0].shift_ends_at]);
+  if(currentEvent.rows[0].status!=='pending')throw Object.assign(new Error('Этот интервал уже закрыт или недоступен'),{status:409});
   const already=await c.query('SELECT 1 FROM mic2.qc_fly_control_events f JOIN mic2.qc_inspections qi ON qi.id=f.inspection_id WHERE qi.cycle_id=$1 AND f.scheduled_for=$2 LIMIT 1',[cycleId,slot]);
   if(already.rowCount)throw Object.assign(new Error('Летучий контроль за этот временной интервал уже проведён'),{status:409});
   if(defectQty>0&&!description)throw Object.assign(new Error('Опишите обнаруженное несоответствие'),{status:400});
