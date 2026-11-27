@@ -1045,17 +1045,17 @@ app.get('/api/qc/defects', authenticate, requirePermission('qc:defects:read'), a
 app.post('/api/qc/defects/:id/decisions', authenticate, requirePermission('qc:defects:decide'), async (req,res,next)=>{
  const defectId=Number(req.params.id),quantity=Number(req.body?.quantity),decisionType=String(req.body?.decision_type||'');
  const note=typeof req.body?.note==='string'?req.body.note.trim():'';
- const map={with_good_product:{movement:'qc_good',from:'production_pending_qc',to:'good_unboxed',disposition:'packed_with_good'},isolator:{movement:'qc_to_isolator',from:'production_pending_qc',to:'isolator',disposition:'isolator_in'},rework:{movement:'qc_to_rework',from:'production_pending_qc',to:'rework',disposition:'rework_sent'},scrap:{movement:'scrapped',from:'production_pending_qc',to:'scrapped',disposition:'scrapped'}};
+ const map={with_good_product:{movement:'qc_good',to:'good_unboxed',disposition:'packed_with_good'},isolator:{movement:'qc_to_isolator',to:'isolator',disposition:'isolator_in'},rework:{movement:'qc_to_rework',to:'rework',disposition:'rework_sent'},scrap:{movement:'scrapped',to:'scrapped',disposition:'scrapped'}};
  if(!Number.isSafeInteger(defectId)||defectId<1||!Number.isSafeInteger(quantity)||quantity<1||!map[decisionType])return res.status(400).json({ok:false,message:'Укажите корректное решение и количество деталей'});
  const c=await pool.connect();
  try{
   await c.query('BEGIN');
-  const d=await c.query("SELECT id,cycle_id,confirmed_quantity,defect_status FROM mic2.defects WHERE id=$1 FOR UPDATE",[defectId]);
+  const d=await c.query("SELECT id,cycle_id,confirmed_quantity,defect_status,source_bucket FROM mic2.defects WHERE id=$1 FOR UPDATE",[defectId]);
   if(!d.rowCount||!['awaiting_decision','active'].includes(d.rows[0].defect_status))throw Object.assign(new Error('Дефект уже закрыт или не найден'),{status:404});
   const prior=await c.query('SELECT COALESCE(SUM(decided_quantity),0)::int AS quantity FROM mic2.defect_decisions WHERE defect_id=$1',[defectId]);
   const remaining=d.rows[0].confirmed_quantity-prior.rows[0].quantity;
   if(quantity>remaining)throw Object.assign(new Error(`Для решения осталось ${remaining} деталей`),{status:409});
-  const m=map[decisionType];
+  const m={...map[decisionType],from:d.rows[0].source_bucket||'production_pending_qc'};
   const decision=await c.query('INSERT INTO mic2.defect_decisions(defect_id,decision_type,decided_quantity,decision_by,note) VALUES($1,$2,$3,$4,$5) RETURNING id',[defectId,decisionType,quantity,req.employee.id,note||null]);
   await c.query('INSERT INTO mic2.cycle_quantity_movements(cycle_id,movement_type,from_bucket,to_bucket,quantity,defect_id,entered_by,note) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[d.rows[0].cycle_id,m.movement,m.from,m.to,quantity,defectId,req.employee.id,note||m.disposition]);
   await c.query('INSERT INTO mic2.defect_dispositions(defect_id,decision_id,disposition_type,quantity,performed_by,confirmed_by,note) VALUES($1,$2,$3,$4,$5,$5,$6)',[defectId,decision.rows[0].id,m.disposition,quantity,req.employee.id,note||null]);
@@ -1161,7 +1161,7 @@ app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), asy
         COALESCE(card_params.parameters,'[]'::json) AS measurement_parameters,
         COALESCE(q.quantity,0)::int AS pending_quantity,
         COALESCE(d.quantity,0)::int AS reserved_defect_quantity,
-        GREATEST(COALESCE(q.quantity,0)-COALESCE(d.quantity,0),0)::int AS available_quantity
+        GREATEST(COALESCE(q.quantity,0)-COALESCE(d.quantity,0),0)::int AS available_quantity,'production'::text AS source_type,NULL::bigint AS rework_record_id
       FROM mic2.production_cycles c
       JOIN mic2.employees e ON e.id=c.responsible_employee_id
       LEFT JOIN mic2.v_cycle_quantity_balances q ON q.cycle_id=c.id AND q.bucket='production_pending_qc'
@@ -1202,7 +1202,7 @@ app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), asy
 
 app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'), async (req,res,next)=>{
   const b=req.body||{};
-  const cycleId=Number(b.cycle_id),good=Number(b.good_quantity),defective=Number(b.defect_quantity);
+  const cycleId=Number(b.cycle_id),good=Number(b.good_quantity),defective=Number(b.defect_quantity),sourceBucket=b.source_type==='rework'?'rework_pending_qc':'production_pending_qc';
   const description=typeof b.defect_description==='string'?b.defect_description.trim():'';
   const comment=typeof b.comment==='string'?b.comment.trim():'';
   if(!Number.isSafeInteger(cycleId)||cycleId<1||!Number.isSafeInteger(good)||good<0||!Number.isSafeInteger(defective)||defective<0||good+defective<1){
@@ -1214,7 +1214,7 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
   const c=await pool.connect();
   try{
     await c.query('BEGIN');
-    const cycle=await c.query("SELECT id,bin_id,card_id,production_finished_at FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' FOR UPDATE",[cycleId]);
+    const cycle=await c.query("SELECT id,bin_id,card_id,production_finished_at,cycle_status FROM mic2.production_cycles WHERE id=$1 AND ($2='rework_pending_qc' OR cycle_status='active') FOR UPDATE",[cycleId,sourceBucket]);
     if(!cycle.rowCount)throw Object.assign(new Error('Активный производственный цикл не найден'),{status:404});
     const measurementRows=Array.isArray(b.measurements)?b.measurements:[];
     let validParameters=[];
@@ -1228,15 +1228,15 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
     }
     const balances=await c.query(`
       SELECT
-        COALESCE((SELECT quantity FROM mic2.v_cycle_quantity_balances WHERE cycle_id=$1 AND bucket='production_pending_qc'),0)::int AS pending,
+        COALESCE((SELECT quantity FROM mic2.v_cycle_quantity_balances WHERE cycle_id=$1 AND bucket=$2),0)::int AS pending,
         COALESCE((SELECT SUM(confirmed_quantity) FROM mic2.defects WHERE cycle_id=$1 AND defect_status IN ('awaiting_decision','active')),0)::int AS reserved
-    `,[cycleId]);
+    `,[cycleId,sourceBucket]);
     const available=Math.max(0,balances.rows[0].pending-balances.rows[0].reserved);
     if(good+defective>available)throw Object.assign(new Error(`Для контроля доступно только ${available} деталей`),{status:409});
     const inspection=await c.query(`
       INSERT INTO mic2.qc_inspections(cycle_id,controller_id,inspection_type,card_id,completed_at,comment)
-      VALUES($1,$2,'scheduled_round',$3,now(),$4) RETURNING id
-    `,[cycleId,req.employee.id,cycle.rows[0].card_id,comment||null]);
+      VALUES($1,$2,$5,$3,now(),$4) RETURNING id
+    `,[cycleId,req.employee.id,cycle.rows[0].card_id,comment||null,sourceBucket==='rework_pending_qc'?'rework_acceptance':'scheduled_round']);
     for(const m of measurementRows){
       await c.query(`
         INSERT INTO mic2.qc_measurement_results(inspection_id,parameter_id,measured_value,comment)
@@ -1252,8 +1252,8 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
       defect=d.rows[0];
       await c.query(`
         INSERT INTO mic2.cycle_quantity_movements(cycle_id,movement_type,from_bucket,to_bucket,quantity,defect_id,entered_by,note)
-        VALUES($1,'qc_to_isolator','production_pending_qc','isolator_external',$2,$3,$4,$5)
-      `,[cycleId,defective,defect.id,req.employee.id,'Дефектные детали перемещены в изолятор после приёмки ОТК']);
+        VALUES($1,'qc_to_isolator',$6,'isolator_external',$2,$3,$4,$5)
+      `,[cycleId,defective,defect.id,req.employee.id,'Дефектные детали перемещены в изолятор после приёмки ОТК',sourceBucket]);
       await c.query(`
         INSERT INTO mic2.isolator_movements(defect_id,movement_type,quantity,confirmed_by,note)
         VALUES($1,'in',$2,$3,$4)
@@ -1266,8 +1266,8 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
     if(good>0){
       await c.query(`
         INSERT INTO mic2.cycle_quantity_movements(cycle_id,movement_type,from_bucket,to_bucket,quantity,entered_by,note)
-        VALUES($1,'qc_good','production_pending_qc','good_unboxed',$2,$3,$4)
-      `,[cycleId,good,req.employee.id,comment||'Принято ОТК']);
+        VALUES($1,'qc_good',$5,'good_unboxed',$2,$3,$4)
+      `,[cycleId,good,req.employee.id,comment||'Принято ОТК',sourceBucket]);
     }
     let sourceBinReleased=false;
     if(cycle.rows[0].production_finished_at){
