@@ -682,7 +682,8 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
   if(!cycle.rowCount)throw Object.assign(new Error('Активный производственный цикл не найден'),{status:404});
   if(sample>cycle.rows[0].output_quantity)throw Object.assign(new Error('Размер выборки не может превышать выпущенное количество деталей'),{status:409});
   const slot=cycle.rows[0].current_fly_slot;
-  if(Date.now()<new Date(slot).getTime()||new Date(slot).getHours()<8||new Date(slot)>=new Date(cycle.rows[0].shift_ends_at))throw Object.assign(new Error('Летучий контроль проводится по расписанию: в 08:00 и далее каждые 3 часа до конца смены'),{status:409});
+  const slotCheck=await c.query('SELECT now()>=$1::timestamptz AND $1::timestamptz<$2::timestamptz AS allowed',[slot,cycle.rows[0].shift_ends_at]);
+  if(!slotCheck.rows[0].allowed)throw Object.assign(new Error('Летучий контроль проводится по расписанию: в 08:00 и далее каждые 3 часа до конца смены'),{status:409});
   const already=await c.query('SELECT 1 FROM mic2.qc_fly_control_events f JOIN mic2.qc_inspections qi ON qi.id=f.inspection_id WHERE qi.cycle_id=$1 AND f.scheduled_for=$2 LIMIT 1',[cycleId,slot]);
   if(already.rowCount)throw Object.assign(new Error('Летучий контроль за этот временной интервал уже проведён'),{status:409});
   if(defectQty>0&&!description)throw Object.assign(new Error('Опишите обнаруженное несоответствие'),{status:400});
