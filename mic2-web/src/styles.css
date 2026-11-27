@@ -225,3 +225,13 @@ button{cursor:pointer}button:disabled{opacity:.55;cursor:wait}.tableActions{disp
 .qcHomeTaskDot.attention{background:#e7ad55;box-shadow:0 0 0 4px rgba(231,173,85,.12)}
 @media(max-width:1050px){.qcHomeActionStrip{grid-template-columns:repeat(2,minmax(0,1fr))}.qcHomeActionHeading{grid-column:1/-1}}
 @media(max-width:600px){.qcHomeActionStrip{grid-template-columns:1fr}.qcHomeActionHeading{grid-column:auto}}
+
+/* QC carton workflow filters and explicit action dialog */
+.qcCartonFilters{display:flex;flex-wrap:wrap;gap:8px}
+.qcCartonFilters button{display:inline-flex;align-items:center;gap:9px;padding:8px 12px;border:1px solid #304950;border-radius:9px;background:#172a32;color:#a9c0c2;font:inherit;font-size:10px;cursor:pointer}
+.qcCartonFilters button b{color:#e7f4ef;font-variant-numeric:tabular-nums}
+.qcCartonFilters button.selected{border-color:#68aa98;background:#23433f;color:#e7f4ef}
+.qcCartonActionModal{max-width:480px}
+.qcCartonActionModal label{display:flex;flex-direction:column;gap:7px;margin:12px 0;color:#dcebe6;font-size:11px}
+.qcCartonActionModal input{width:100%;padding:10px 12px;border:1px solid #3b5057;border-radius:8px;background:#101c22;color:#edf5f5;font:inherit}
+.qcCartonActionModal input:focus{outline:none;border-color:#83c5b3}
