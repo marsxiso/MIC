@@ -479,6 +479,34 @@ app.post('/api/qc/my-shifts/:id/attendance', authenticate, requireRoles('qc_cont
  }catch(e){next(e);}
 });
 
+app.post('/api/cnc/my-shifts/:id/attendance', authenticate, requireRoles('cnc_operator'), async(req,res,next)=>{
+ const id=Number(req.params.id),b=req.body||{};
+ const status=typeof b.attendance_status==='string'?b.attendance_status:'';
+ const note=typeof b.attendance_note==='string'?b.attendance_note.trim():'';
+ const actualTime=typeof b.actual_time==='string'?b.actual_time.trim():'';
+ if(!Number.isSafeInteger(id)||id<1||!['present','absent','left_early'].includes(status))
+  return res.status(400).json({ok:false,message:'Выберите корректный статус явки'});
+ if(note.length>500)return res.status(400).json({ok:false,message:'Комментарий не должен превышать 500 символов'});
+ if(status==='left_early'&&!note)return res.status(400).json({ok:false,message:'Укажите причину раннего ухода'});
+ if(['present','left_early'].includes(status)&&!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(actualTime))
+  return res.status(400).json({ok:false,message:status==='present'?'Укажите фактическое время прихода':'Укажите фактическое время ухода'});
+ try{
+  const r=await pool.query(`
+   UPDATE mic2.shift_assignments
+   SET attendance_status=$3,attendance_note=$4,
+    actual_start_time=CASE WHEN $3='present' THEN $5::time WHEN $3='absent' THEN NULL ELSE actual_start_time END,
+    actual_end_time=CASE WHEN $3='left_early' THEN $5::time WHEN $3='present' THEN NULL WHEN $3='absent' THEN NULL ELSE actual_end_time END,
+    attendance_confirmed_by=$2,attendance_confirmed_at=now()
+   WHERE id=$1 AND employee_id=$2
+    AND shift_date<=CURRENT_DATE
+    AND shift_date>=CURRENT_DATE-INTERVAL '7 days'
+   RETURNING id,attendance_status,attendance_note,actual_start_time,actual_end_time,attendance_confirmed_at
+  `,[id,req.employee.id,status,note||null,actualTime||null]);
+  if(!r.rowCount)return res.status(404).json({ok:false,message:'Смена не найдена, не принадлежит вам или дата смены ещё не наступила'});
+  res.json({ok:true,shift:r.rows[0]});
+ }catch(e){next(e);}
+});
+
 app.get('/api/cnc/my-shifts', authenticate, requirePermission('shift_schedule:own:read'), async(req,res,next)=>{
  try{
   const r=await pool.query(`
