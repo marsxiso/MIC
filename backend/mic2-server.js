@@ -1133,6 +1133,86 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
   }finally{c.release();}
 });
 
+app.get('/api/qc/finished-boxes', authenticate, requirePermission('qc:queue:read','qc:all:read'), async (_req,res,next)=>{
+ try{
+  const r=await pool.query(`
+   SELECT fb.id AS carton_no,fb.product_code_snapshot,fb.product_name_snapshot,fb.quantity,fb.box_norm_snapshot,
+    fb.created_at,fb.closed_at,c.id AS cycle_id,c.bin_id AS source_bin_id,
+    i.id AS inspection_id,e.full_name AS created_by_name
+   FROM mic2.finished_boxes fb
+   LEFT JOIN mic2.production_cycles c ON c.id=fb.cycle_id
+   LEFT JOIN mic2.qc_inspections i ON i.id=fb.inspection_id
+   JOIN mic2.employees e ON e.id=fb.created_by
+   ORDER BY fb.id DESC LIMIT 500
+  `);
+  res.json({ok:true,boxes:r.rows});
+ }catch(e){next(e);}
+});
+
+app.post('/api/qc/finished-boxes/pack/:cycleId', authenticate, requirePermission('qc:inspect:write'), async(req,res,next)=>{
+ const cycleId=Number(req.params.cycleId);
+ if(!Number.isSafeInteger(cycleId)||cycleId<1)return res.status(400).json({ok:false,message:'Некорректный производственный цикл'});
+ const c=await pool.connect();
+ try{
+  await c.query('BEGIN');
+  const cycle=await c.query(`
+   SELECT c.id,c.bin_id,c.product_id,c.product_code_snapshot,c.product_name_snapshot,c.production_finished_at,
+    p.box_quantity_norm
+   FROM mic2.production_cycles c JOIN mic2.products p ON p.id=c.product_id
+   WHERE c.id=$1 AND c.cycle_status='active' FOR UPDATE OF c
+  `,[cycleId]);
+  if(!cycle.rowCount)throw Object.assign(new Error('Активный производственный цикл не найден'),{status:404});
+  const latest=await c.query(`
+   SELECT id FROM mic2.qc_inspections
+   WHERE cycle_id=$1 AND completed_at IS NOT NULL
+   ORDER BY completed_at DESC,id DESC LIMIT 1
+  `,[cycleId]);
+  if(!latest.rowCount)throw Object.assign(new Error('Сначала должна быть проведена проверка ОТК'),{status:409});
+  const balance=await c.query(`
+   SELECT COALESCE(quantity,0)::int AS quantity
+   FROM mic2.v_cycle_quantity_balances WHERE cycle_id=$1 AND bucket='good_unboxed'
+  `,[cycleId]);
+  const available=balance.rows[0]?.quantity||0;
+  if(available<1)throw Object.assign(new Error('Нет принятой годной продукции для упаковки'),{status:409});
+  const norm=cycle.rows[0].box_quantity_norm;
+  let remaining=available;
+  const cartons=[];
+  while(remaining>0){
+   const quantity=Math.min(norm,remaining);
+   const carton=await c.query(`
+    INSERT INTO mic2.finished_boxes(product_id,product_code_snapshot,product_name_snapshot,box_norm_snapshot,quantity,created_by,cycle_id,source_bin_id,inspection_id)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,quantity,box_norm_snapshot
+   `,[cycle.rows[0].product_id,cycle.rows[0].product_code_snapshot,cycle.rows[0].product_name_snapshot,norm,quantity,req.employee.id,cycleId,cycle.rows[0].bin_id,latest.rows[0].id]);
+   await c.query(`
+    INSERT INTO mic2.cycle_quantity_movements(cycle_id,movement_type,from_bucket,to_bucket,quantity,entered_by,note)
+    VALUES($1,'packed','good_unboxed','packed',$2,$3,$4)
+   `,[cycleId,quantity,req.employee.id,'Упаковано в коробку ОТК №'+carton.rows[0].id]);
+   cartons.push(carton.rows[0]);
+   remaining-=quantity;
+  }
+  const residue=await c.query(`
+   SELECT COALESCE(SUM(quantity),0)::int AS quantity
+   FROM mic2.v_cycle_quantity_balances
+   WHERE cycle_id=$1 AND bucket NOT IN ('packed','scrapped','rework_external','isolator_external')
+  `,[cycleId]);
+  let sourceBinReleased=false;
+  if(cycle.rows[0].production_finished_at&&residue.rows[0].quantity===0){
+   await c.query("UPDATE mic2.production_cycles SET cycle_status='completed',ended_at=COALESCE(ended_at,now()) WHERE id=$1 AND cycle_status='active'",[cycleId]);
+   await c.query("UPDATE mic2.plastic_bins SET bin_status='free' WHERE id=$1 AND bin_status='occupied'",[cycle.rows[0].bin_id]);
+   sourceBinReleased=true;
+  }
+  await c.query(`INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,before_data,after_data,reason)
+   VALUES($1,$2,'qc_finished_cartons_created','production_cycle',$3,$4::jsonb,$5::jsonb,$6)`,
+   [req.employee.id,req.employee.role_code,cycleId,JSON.stringify({good_unboxed:available}),JSON.stringify({cartons:cartons.map(x=>({id:x.id,quantity:x.quantity})),packed_quantity:available,source_bin_released:sourceBinReleased}),null]);
+  await c.query('COMMIT');
+  res.status(201).json({ok:true,cartons,packed_quantity:available,source_bin_released:sourceBinReleased});
+ }catch(e){
+  await c.query('ROLLBACK').catch(()=>{});
+  if(e.status)return res.status(e.status).json({ok:false,message:e.message});
+  next(e);
+ }finally{c.release();}
+});
+
 app.post('/api/bins', authenticate, requirePermission('bins:write'), async (req,res,next)=>{try{const r=await pool.query('INSERT INTO mic2.plastic_bins(created_by) VALUES($1) RETURNING id,bin_status,created_at',[req.employee.id]);res.status(201).json({ok:true,bin:r.rows[0]});}catch(e){next(e);}});
 
 app.post('/api/cycles/:id/output', authenticate, requirePermission('output:own:write','output:manage'), async (req,res,next)=>{
