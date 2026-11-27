@@ -1093,19 +1093,20 @@ app.get('/api/qc/isolator', authenticate, requirePermission('qc:defects:read'), 
 });
 app.post('/api/qc/isolator/:id/movements', authenticate, requirePermission('qc:defects:decide'), async (req,res,next)=>{
  const defectId=Number(req.params.id),quantity=Number(req.body?.quantity),actionType=String(req.body?.action_type||''),note=typeof req.body?.note==='string'?req.body.note.trim():'';
- const map={good:{to:'good_unboxed',movement:'isolator_to_good'},rework:{to:'rework',movement:'isolator_to_rework'},scrap:{to:'scrapped',movement:'isolator_to_scrap'}};
+ const map={good:{to:'good_unboxed',movement:'qc_good',isolatorMovement:'out',disposition:'isolator_out'},rework:{to:'rework',movement:'isolator_returned',isolatorMovement:'return_to_production',disposition:'rework_returned'},scrap:{to:'scrapped',movement:'scrapped',isolatorMovement:'out',disposition:'scrapped'}};
  if(!Number.isSafeInteger(defectId)||defectId<1||!Number.isSafeInteger(quantity)||quantity<1||!map[actionType])return res.status(400).json({ok:false,message:'Укажите корректное решение и количество'});
  const c=await pool.connect();
  try{
   await c.query('BEGIN');
   const d=await c.query('SELECT id,cycle_id,confirmed_quantity FROM mic2.defects WHERE id=$1 FOR UPDATE',[defectId]);
   if(!d.rowCount)throw Object.assign(new Error('Запись дефекта не найдена'),{status:404});
-  const stock=await c.query("SELECT COALESCE(SUM(CASE WHEN movement_type='in' THEN quantity WHEN movement_type='out' THEN -quantity ELSE 0 END),0)::int AS quantity FROM mic2.isolator_movements WHERE defect_id=$1",[defectId]);
+  const stock=await c.query("SELECT COALESCE(SUM(CASE WHEN movement_type='in' THEN quantity WHEN movement_type IN ('out','return_to_production') THEN -quantity ELSE 0 END),0)::int AS quantity FROM mic2.isolator_movements WHERE defect_id=$1",[defectId]);
   const remaining=stock.rows[0].quantity;
   if(quantity>remaining)throw Object.assign(new Error('В изоляторе осталось '+remaining+' деталей'),{status:409});
   const m=map[actionType];
-  await c.query("INSERT INTO mic2.isolator_movements(defect_id,movement_type,quantity,confirmed_by,note) VALUES($1,'out',$2,$3,$4)",[defectId,quantity,req.employee.id,note||actionType]);
+  await c.query("INSERT INTO mic2.isolator_movements(defect_id,movement_type,quantity,confirmed_by,note) VALUES($1,$2,$3,$4,$5)",[defectId,m.isolatorMovement,quantity,req.employee.id,note||actionType]);
   await c.query('INSERT INTO mic2.cycle_quantity_movements(cycle_id,movement_type,from_bucket,to_bucket,quantity,defect_id,entered_by,note) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[d.rows[0].cycle_id,m.movement,'isolator',m.to,quantity,defectId,req.employee.id,note||actionType]);
+  await c.query('INSERT INTO mic2.defect_dispositions(defect_id,decision_id,disposition_type,quantity,performed_by,confirmed_by,note) VALUES($1,NULL,$2,$3,$4,$4,$5)',[defectId,m.disposition,quantity,req.employee.id,note||null]);
   await c.query(`INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,before_data,after_data,reason)
    VALUES($1,$2,'isolator_disposition','defect',$3,$4::jsonb,$5::jsonb,$6)`,
    [req.employee.id,req.employee.role_code,defectId,JSON.stringify({isolator_quantity:remaining}),JSON.stringify({action_type:actionType,quantity,remaining_quantity:remaining-quantity}),note||null]);
