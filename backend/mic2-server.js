@@ -1139,7 +1139,7 @@ app.post('/api/qc/rework/:id/return-to-qc', authenticate, requirePermission('qc:
   const quantity=stock.rows[0].quantity;
   if(quantity<1)throw Object.assign(new Error('На доработке нет деталей для возврата'),{status:409});
   await c.query(`INSERT INTO mic2.cycle_quantity_movements(cycle_id,movement_type,from_bucket,to_bucket,quantity,defect_id,entered_by,note)
-   VALUES($1,'rework_returned','rework','production_pending_qc',$2,$3,$4,'Возврат после доработки на повторную приёмку ОТК')`,[d.rows[0].cycle_id,quantity,defectId,req.employee.id]);
+   VALUES($1,'rework_returned','rework','rework_pending_qc',$2,$3,$4,'Возврат после доработки в отдельную очередь повторной приёмки ОТК')`,[d.rows[0].cycle_id,quantity,defectId,req.employee.id]);
   await c.query(`UPDATE mic2.rework_records SET quantity_returned=quantity_sent,returned_at=now()
    WHERE defect_id=$1 AND returned_at IS NULL`,[defectId]);
   await c.query(`INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,before_data,after_data,reason)
@@ -1179,7 +1179,22 @@ app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), asy
       ) d ON TRUE
       WHERE c.cycle_status='active'
         AND COALESCE(q.quantity,0)-COALESCE(d.quantity,0)>0
-      ORDER BY c.started_at,c.id
+      UNION ALL
+      SELECT c.id AS cycle_id,NULL::bigint AS bin_id,0::int AS cycle_no,c.product_name_snapshot,c.product_code_snapshot,
+        ''::text AS setup_code_snapshot,'Повторная приёмка после доработки'::text AS responsible_name,
+        c.card_id AS card_id,FALSE AS first_piece_pending,
+        COALESCE(card_params.parameters,'[]'::json) AS measurement_parameters,
+        COALESCE(qr.quantity,0)::int AS pending_quantity,0::int AS reserved_defect_quantity,
+        COALESCE(qr.quantity,0)::int AS available_quantity,'rework'::text AS source_type,
+        rr.id AS rework_record_id
+      FROM mic2.rework_records rr
+      JOIN mic2.defects d0 ON d0.id=rr.defect_id
+      JOIN mic2.production_cycles c ON c.id=d0.cycle_id
+      LEFT JOIN LATERAL(SELECT COALESCE(SUM(CASE WHEN to_bucket='rework_pending_qc' THEN quantity WHEN from_bucket='rework_pending_qc' THEN -quantity ELSE 0 END),0)::int AS quantity
+        FROM mic2.cycle_quantity_movements WHERE defect_id=d0.id) qr ON TRUE
+      LEFT JOIN LATERAL(SELECT json_agg(json_build_object('id',mp.id,'parameter_name',mp.parameter_name,'installation_no',mp.installation_no,'drawing_dimension',COALESCE(mp.drawing_dimension,mp.nominal_value),'dimension_prefix',mp.dimension_prefix,'upper_deviation',mp.upper_deviation,'lower_deviation',mp.lower_deviation,'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,'unit',mp.unit,'instruction',mp.instruction) ORDER BY mp.sort_order) AS parameters FROM mic2.measurement_parameters mp WHERE mp.card_id=c.card_id) card_params ON TRUE
+      WHERE qr.quantity>0
+      ORDER BY cycle_id
     `);
     res.json({ok:true,items:r.rows});
   } catch(e){next(e);}
