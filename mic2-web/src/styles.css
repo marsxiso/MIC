@@ -509,3 +509,17 @@ td small{line-height:1.45}
 .reworkTable th:last-child,.reworkTable td:last-child{text-align:center}
 .reworkTable td:last-child .smallButton{display:inline-flex;align-items:center;justify-content:center;margin:0 auto}
 .reworkTable th{vertical-align:middle}
+
+
+/* Shared MIC workspace visual rhythm */
+.metrics.compact{grid-template-columns:repeat(3,minmax(0,1fr))}
+.metric,.tile,.tableWrap,.qcCartonsIntro,.calendarToolbar,.calendarGrid{border-radius:14px}
+.metric,.tile{box-shadow:0 5px 18px rgba(0,0,0,.08)}
+.tableWrap{width:100%;background:#172a31;border-color:#304b50}
+.tableWrap th{background:#1c3239}
+.tableWrap tbody tr:hover{background:#1c3037}
+.section{gap:16px}
+.section>div:first-child{min-width:0}
+.section h2{color:#e5efed;letter-spacing:-.02em}
+@media(max-width:900px){.metrics.compact{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:500px){.metrics.compact{grid-template-columns:1fr}}
