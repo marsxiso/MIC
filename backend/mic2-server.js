@@ -586,6 +586,31 @@ app.get('/api/qc/production', authenticate, requirePermission('qc:production:rea
  }catch(e){next(e);}
 });
 
+app.get('/api/qc/control-schedules', authenticate, requirePermission('accounts:create'), async(_req,res,next)=>{
+ try{
+  const r=await pool.query(`SELECT p.id AS product_id,p.product_code,p.product_name,
+   COALESCE(s.first_piece_required,TRUE) AS first_piece_required,
+   COALESCE(s.fly_interval_quantity,100) AS fly_interval_quantity
+   FROM mic2.products p LEFT JOIN mic2.qc_control_schedules s ON s.product_id=p.id
+   WHERE p.is_active ORDER BY p.product_name`);
+  res.json({ok:true,schedules:r.rows});
+ }catch(e){next(e);}
+});
+app.put('/api/qc/control-schedules/:productId', authenticate, requirePermission('accounts:create'), async(req,res,next)=>{
+ const productId=Number(req.params.productId),b=req.body||{},interval=Number(b.fly_interval_quantity);
+ if(!Number.isSafeInteger(productId)||productId<1||!Number.isSafeInteger(interval)||interval<0||interval>1000000||typeof b.first_piece_required!=='boolean')
+  return res.status(400).json({ok:false,message:'Укажите корректные параметры контроля'});
+ try{
+  const p=await pool.query('SELECT id FROM mic2.products WHERE id=$1 AND is_active',[productId]);
+  if(!p.rowCount)return res.status(404).json({ok:false,message:'Изделие не найдено'});
+  const r=await pool.query(`INSERT INTO mic2.qc_control_schedules(product_id,first_piece_required,fly_interval_quantity,updated_by,updated_at)
+   VALUES($1,$2,$3,$4,now()) ON CONFLICT(product_id) DO UPDATE SET first_piece_required=EXCLUDED.first_piece_required,
+   fly_interval_quantity=EXCLUDED.fly_interval_quantity,updated_by=EXCLUDED.updated_by,updated_at=now()
+   RETURNING product_id,first_piece_required,fly_interval_quantity`,[productId,b.first_piece_required,interval,req.employee.id]);
+  res.json({ok:true,schedule:r.rows[0]});
+ }catch(e){next(e);}
+});
+
 app.get('/api/qc/fly-control', authenticate, requirePermission('qc:fly:read'), async(req,res,next)=>{
  try{
   const ownOnly=req.employee.role_code==='qc_controller';
@@ -629,7 +654,7 @@ app.get('/api/qc/fly-control/:id', authenticate, requirePermission('qc:fly:read'
    LEFT JOIN mic2.measurement_cards mc ON mc.id=i.card_id
    LEFT JOIN mic2.qc_measurement_results mr ON mr.inspection_id=i.id
    LEFT JOIN mic2.measurement_parameters mp ON mp.id=mr.parameter_id
-   WHERE f.id=$1 AND (NOT $2 OR i.controller_id=$3)
+   WHERE f.id=$1 AND (NOT $2 OR i.controller_id=$3) AND c.cycle_status='active' AND c.production_finished_at IS NULL
    GROUP BY f.id,i.id,c.id,e.full_name,mc.version_no
   `,[id,ownOnly,req.employee.id]);
   if(!r.rowCount)return res.status(404).json({ok:false,message:'Летучая проверка не найдена'});
@@ -654,7 +679,7 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
  const c=await pool.connect();
  try{
   await c.query('BEGIN');
-  const cycle=await c.query("SELECT id,card_id,(SELECT COALESCE(SUM(quantity),0)::int FROM mic2.production_output_entries WHERE cycle_id=mic2.production_cycles.id) AS output_quantity FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' FOR UPDATE",[cycleId]);
+  const cycle=await c.query("SELECT id,card_id,(SELECT COALESCE(SUM(quantity),0)::int FROM mic2.production_output_entries WHERE cycle_id=mic2.production_cycles.id) AS output_quantity FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' AND production_finished_at IS NULL FOR UPDATE",[cycleId]);
   if(!cycle.rowCount)throw Object.assign(new Error('Активный производственный цикл не найден'),{status:404});
   if(sample>cycle.rows[0].output_quantity)throw Object.assign(new Error('Размер выборки не может превышать выпущенное количество деталей'),{status:409});
   if(defectQty>0&&!description)throw Object.assign(new Error('Опишите обнаруженное несоответствие'),{status:400});
@@ -675,7 +700,7 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
   const event=await c.query(`
    INSERT INTO mic2.qc_fly_control_events(inspection_id,sample_quantity,inspection_result,defect_quantity,defect_description,action_required)
    VALUES($1,$2,$3,$4,$5,$6) RETURNING id
-  `,[inspection.rows[0].id,sample,result,defectQty,description||null,actionRequired||result==='fail']);
+  `,[inspection.rows[0].id,sample,result,defectQty,description||null,actionRequired||result==='fail',cycle.rows[0].output_quantity]);
   await c.query(`
    INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,after_data,reason)
    VALUES($1,$2,'qc_fly_control','qc_inspection',$3,$4::jsonb,$5)
