@@ -627,7 +627,24 @@ app.get('/api/qc/fly-control', authenticate, requirePermission('qc:fly:read'), a
    WHERE (NOT $1 OR i.controller_id=$2)
    ORDER BY f.created_at DESC LIMIT 300
   `,[ownOnly,req.employee.id]);
-  res.json({ok:true,checks:r.rows});
+  const due=await pool.query(`
+   SELECT c.id AS cycle_id,c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,
+    e.full_name AS operator_name,mc.version_no AS card_version,
+    COALESCE(outp.output_quantity,0)::int AS output_quantity,
+    date_trunc('day',now())+interval '8 hours'+floor(GREATEST(0,extract(epoch FROM (now()-(date_trunc('day',now())+interval '8 hours')))/10800))*interval '3 hours' AS scheduled_for
+   FROM mic2.production_cycles c
+   JOIN mic2.employees e ON e.id=c.responsible_employee_id
+   LEFT JOIN mic2.measurement_cards mc ON mc.id=c.card_id
+   LEFT JOIN LATERAL(SELECT COALESCE(SUM(quantity),0)::int AS output_quantity FROM mic2.production_output_entries WHERE cycle_id=c.id) outp ON TRUE
+   WHERE c.cycle_status='active' AND c.production_finished_at IS NULL
+    AND now()>=date_trunc('day',now())+interval '8 hours'
+    AND date_trunc('day',now())+interval '8 hours'+floor(GREATEST(0,extract(epoch FROM (now()-(date_trunc('day',now())+interval '8 hours')))/10800))*interval '3 hours'
+      < COALESCE((SELECT sa.ends_at FROM mic2.shift_assignments sa WHERE sa.employee_id=c.responsible_employee_id AND sa.shift_date=CURRENT_DATE ORDER BY sa.ends_at DESC NULLS LAST LIMIT 1),date_trunc('day',now())+interval '20 hours')
+    AND NOT EXISTS(SELECT 1 FROM mic2.qc_fly_control_events f JOIN mic2.qc_inspections i ON i.id=f.inspection_id
+      WHERE i.cycle_id=c.id AND f.scheduled_for=date_trunc('day',now())+interval '8 hours'+floor(GREATEST(0,extract(epoch FROM (now()-(date_trunc('day',now())+interval '8 hours')))/10800))*interval '3 hours')
+   ORDER BY c.started_at,c.bin_id
+  `);
+  res.json({ok:true,checks:r.rows,active_due:due.rows});
  }catch(e){next(e);}
 });
 
