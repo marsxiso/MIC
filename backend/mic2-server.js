@@ -1018,6 +1018,8 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
     await c.query('BEGIN');
     const cycle=await c.query("SELECT id,card_id FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' FOR UPDATE",[cycleId]);
     if(!cycle.rowCount)throw Object.assign(new Error('Активный производственный цикл не найден'),{status:404});
+    const firstPiece=await c.query("SELECT COALESCE((SELECT first_piece_required FROM mic2.qc_control_schedules WHERE product_id=(SELECT product_id FROM mic2.production_cycles WHERE id=$1)),TRUE) AND NOT EXISTS(SELECT 1 FROM mic2.qc_inspections WHERE cycle_id=$1 AND inspection_type='first_piece') AS pending",[cycleId]);
+    if(firstPiece.rows[0].pending&&good+defective!==1)throw Object.assign(new Error('Первичная проверка должна проводиться по одной первой детали'),{status:400});
     const measurementRows=Array.isArray(b.measurements)?b.measurements:[];
     let validParameters=[];
     if(cycle.rows[0].card_id){
