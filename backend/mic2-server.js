@@ -556,7 +556,7 @@ app.get('/api/qc/production', authenticate, requirePermission('qc:production:rea
  try{
   const r=await pool.query(`
    SELECT c.id AS cycle_id,c.bin_id,c.cycle_no,c.started_at,c.product_code_snapshot,
-    c.product_name_snapshot,c.setup_code_snapshot,e.full_name AS operator_name,
+    c.product_name_snapshot,''::text AS setup_code_snapshot,e.full_name AS operator_name,
     COALESCE(outp.output_quantity,0)::int AS output_quantity,
     COALESCE(bal.pending_qc,0)::int AS pending_qc,
     COALESCE(bal.good_quantity,0)::int AS good_quantity,
@@ -687,7 +687,7 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
 });
 
 app.get('/api/products', authenticate, requirePermission('products:read'), async (_req,res,next)=>{
-  try { const r=await pool.query("SELECT p.id,p.product_code,p.product_name,p.description,p.box_quantity_norm,COALESCE(json_agg(json_build_object('id',s.id,'setup_code',s.setup_code,'setup_name',s.setup_name)) FILTER(WHERE s.id IS NOT NULL),'[]') AS setups FROM mic2.products p LEFT JOIN mic2.product_setups s ON s.product_id=p.id AND s.is_active WHERE p.is_active GROUP BY p.id ORDER BY p.product_name");res.json({ok:true,products:r.rows}); } catch(e){next(e);}
+  try { const r=await pool.query("SELECT p.id,p.product_code,p.product_name,p.description,p.box_quantity_norm,COALESCE((SELECT json_agg(json_build_object('id',d.id,'version_no',d.version_no,'original_filename',d.original_filename,'file_uri',d.file_uri,'is_current',d.is_current) ORDER BY d.version_no DESC) FROM mic2.product_drawings d WHERE d.product_id=p.id),'[]') AS drawings FROM mic2.products p WHERE p.is_active ORDER BY p.product_name");res.json({ok:true,products:r.rows}); } catch(e){next(e);}
 });
 
 
@@ -758,14 +758,24 @@ app.post('/api/admin/accounts', authenticate, requirePermission('accounts:create
 });
 
 app.post('/api/products', authenticate, requirePermission('products:write'), async (req,res,next)=>{
-  const b=req.body||{};const norm=Number(b.box_quantity_norm);if(!b.product_code?.trim()||!b.product_name?.trim()||!Number.isInteger(norm)||norm<1||!b.setup_code?.trim()||!b.setup_name?.trim())return res.status(400).json({ok:false,message:'Заполните код, название, норму коробки и наладку'});
-  const c=await pool.connect();try{await c.query('BEGIN');const p=await c.query('INSERT INTO mic2.products(product_code,product_name,description,box_quantity_norm,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *',[b.product_code.trim(),b.product_name.trim(),b.description||null,norm,req.employee.id]);const s=await c.query('INSERT INTO mic2.product_setups(product_id,setup_code,setup_name) VALUES($1,$2,$3) RETURNING *',[p.rows[0].id,b.setup_code.trim(),b.setup_name.trim()]);await c.query('COMMIT');res.status(201).json({ok:true,product:p.rows[0],setup:s.rows[0]});}catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.code==='23505')return res.status(409).json({ok:false,message:'Такой код уже используется'});next(e);}finally{c.release();}
+ const b=req.body||{},norm=Number(b.box_quantity_norm);
+ if(!b.product_code?.trim()||!b.product_name?.trim()||!Number.isInteger(norm)||norm<1)return res.status(400).json({ok:false,message:'Заполните код, наименование и норму деталей в коробке'});
+ try{const p=await pool.query('INSERT INTO mic2.products(product_code,product_name,description,box_quantity_norm,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *',[b.product_code.trim(),b.product_name.trim(),b.description||null,norm,req.employee.id]);res.status(201).json({ok:true,product:p.rows[0]});}
+ catch(e){if(e.code==='23505')return res.status(409).json({ok:false,message:'Такой код изделия уже используется'});next(e);}
 });
 
 app.post('/api/cycles', authenticate, requirePermission('cycles:write'), async (req,res)=>{
-  const b=req.body||{};const binId=Number(b.bin_id),productId=Number(b.product_id),setupId=Number(b.setup_id),operatorId=Number(b.operator_id);if(![binId,productId,setupId,operatorId].every(Number.isSafeInteger))return res.status(400).json({ok:false,message:'Выберите контейнер, изделие, наладку и оператора'});
-  const c=await pool.connect();try{await c.query('BEGIN');const bin=await c.query("SELECT id FROM mic2.plastic_bins WHERE id=$1 AND bin_status='free' FOR UPDATE",[binId]);if(!bin.rowCount)throw Object.assign(Error('Контейнер не свободен'),{status:409});const p=await c.query('SELECT * FROM mic2.products WHERE id=$1 AND is_active',[productId]);if(!p.rowCount)throw Object.assign(Error('Изделие не найдено'),{status:404});const s=await c.query('SELECT * FROM mic2.product_setups WHERE id=$1 AND product_id=$2 AND is_active',[setupId,productId]);if(!s.rowCount)throw Object.assign(Error('Наладка не соответствует изделию'),{status:400});const op=await c.query("SELECT id FROM mic2.employees WHERE id=$1 AND role_code='cnc_operator' AND account_status='active' AND terminated_at IS NULL",[operatorId]);if(!op.rowCount)throw Object.assign(Error('Выбранный сотрудник не является активным оператором ЧПУ'),{status:400});const n=await c.query('SELECT COALESCE(MAX(cycle_no),0)+1 AS n FROM mic2.production_cycles WHERE bin_id=$1',[binId]);const activeCard=await c.query("SELECT id FROM mic2.measurement_cards WHERE setup_id=$1 AND review_status='active' ORDER BY version_no DESC LIMIT 1",[setupId]);const cy=await c.query('INSERT INTO mic2.production_cycles(bin_id,cycle_no,product_id,setup_id,card_id,started_by,responsible_employee_id,product_code_snapshot,product_name_snapshot,setup_code_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *',[binId,n.rows[0].n,productId,setupId,activeCard.rows[0]?.id||null,req.employee.id,operatorId,p.rows[0].product_code,p.rows[0].product_name,s.rows[0].setup_code]);await c.query("UPDATE mic2.plastic_bins SET bin_status='occupied' WHERE id=$1",[binId]);await c.query('INSERT INTO mic2.cycle_operator_periods(cycle_id,operator_id,approved_by) VALUES($1,$2,$3)',[cy.rows[0].id,operatorId,req.employee.id]);await c.query('COMMIT');res.status(201).json({ok:true,cycle:cy.rows[0]});
-  }catch(e){await c.query('ROLLBACK').catch(()=>{});res.status(e.status||500).json({ok:false,message:e.status?e.message:(e.code==='23505'?'У контейнера уже есть активный цикл':'Не удалось открыть цикл')});}finally{c.release();}
+ const b=req.body||{},binId=Number(b.bin_id),productId=Number(b.product_id),operatorId=Number(b.operator_id);
+ if(![binId,productId,operatorId].every(Number.isSafeInteger))return res.status(400).json({ok:false,message:'Выберите контейнер, изделие и оператора'});
+ const c=await pool.connect();try{await c.query('BEGIN');
+ const bin=await c.query("SELECT id FROM mic2.plastic_bins WHERE id=$1 AND bin_status='free' FOR UPDATE",[binId]);if(!bin.rowCount)throw Object.assign(Error('Контейнер не свободен'),{status:409});
+ const p=await c.query('SELECT * FROM mic2.products WHERE id=$1 AND is_active',[productId]);if(!p.rowCount)throw Object.assign(Error('Изделие не найдено'),{status:404});
+ const op=await c.query("SELECT id FROM mic2.employees WHERE id=$1 AND role_code='cnc_operator' AND account_status='active' AND terminated_at IS NULL",[operatorId]);if(!op.rowCount)throw Object.assign(Error('Выбранный сотрудник не является активным оператором ЧПУ'),{status:400});
+ const n=await c.query('SELECT COALESCE(MAX(cycle_no),0)+1 AS n FROM mic2.production_cycles WHERE bin_id=$1',[binId]);
+ const activeCard=await c.query("SELECT id FROM mic2.measurement_cards WHERE product_id=$1 AND review_status='active' ORDER BY version_no DESC LIMIT 1",[productId]);
+ const cy=await c.query('INSERT INTO mic2.production_cycles(bin_id,cycle_no,product_id,card_id,started_by,responsible_employee_id,product_code_snapshot,product_name_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[binId,n.rows[0].n,productId,activeCard.rows[0]?.id||null,req.employee.id,operatorId,p.rows[0].product_code,p.rows[0].product_name]);
+ await c.query("UPDATE mic2.plastic_bins SET bin_status='occupied' WHERE id=$1",[binId]);await c.query('INSERT INTO mic2.cycle_operator_periods(cycle_id,operator_id,approved_by) VALUES($1,$2,$3)',[cy.rows[0].id,operatorId,req.employee.id]);await c.query('COMMIT');res.status(201).json({ok:true,cycle:cy.rows[0]});
+ }catch(e){await c.query('ROLLBACK').catch(()=>{});res.status(e.status||500).json({ok:false,message:e.status?e.message:(e.code==='23505'?'У контейнера уже есть активный цикл':'Не удалось открыть цикл')});}finally{c.release();}
 });
 
 app.get('/api/bins', authenticate, requirePermission('bins:read'), async (_req,res,next)=>{
@@ -778,59 +788,18 @@ app.get('/api/cycles', authenticate, requirePermission('cycles:read','cycles:own
 
 
 
-app.get('/api/qc/cards', authenticate, requirePermission('qc:cards:read'), async (req,res,next)=>{
-  try{
-    const setupId=req.query.setup_id?Number(req.query.setup_id):null;
-    if(setupId!==null&&!Number.isSafeInteger(setupId))return res.status(400).json({ok:false,message:'Некорректная наладка'});
-    const cards=await pool.query(`
-      SELECT mc.id,mc.setup_id,mc.version_no,mc.source_type,mc.source_file_uri,
-        mc.review_status,mc.created_at,mc.checked_at,creator.full_name AS created_by_name,
-        checker.full_name AS checked_by_name,
-        COALESCE(json_agg(json_build_object(
-          'id',mp.id,'sort_order',mp.sort_order,'parameter_name',mp.parameter_name,
-          'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,
-          'unit',mp.unit,'instruction',mp.instruction
-        ) ORDER BY mp.sort_order) FILTER(WHERE mp.id IS NOT NULL),'[]') AS parameters
-      FROM mic2.measurement_cards mc
-      LEFT JOIN mic2.measurement_parameters mp ON mp.card_id=mc.id
-      LEFT JOIN mic2.employees creator ON creator.id=mc.created_by
-      LEFT JOIN mic2.employees checker ON checker.id=mc.checked_by
-      WHERE ($1::bigint IS NULL OR mc.setup_id=$1)
-      GROUP BY mc.id,creator.full_name,checker.full_name
-      ORDER BY mc.setup_id,mc.version_no DESC
-    `,[setupId]);
-    res.json({ok:true,cards:cards.rows});
-  }catch(e){next(e);}
+app.get('/api/qc/cards', authenticate, requirePermission('qc:cards:read'), async (_req,res,next)=>{
+ try{const cards=await pool.query(`SELECT mc.id,mc.product_id,p.product_code,p.product_name,mc.version_no,mc.source_type,mc.source_file_uri,mc.review_status,mc.created_at,mc.checked_at,creator.full_name AS created_by_name,checker.full_name AS checked_by_name,COALESCE(json_agg(json_build_object('id',mp.id,'sort_order',mp.sort_order,'parameter_name',mp.parameter_name,'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,'unit',mp.unit,'instruction',mp.instruction) ORDER BY mp.sort_order) FILTER(WHERE mp.id IS NOT NULL),'[]') AS parameters FROM mic2.measurement_cards mc JOIN mic2.products p ON p.id=mc.product_id LEFT JOIN mic2.measurement_parameters mp ON mp.card_id=mc.id LEFT JOIN mic2.employees creator ON creator.id=mc.created_by LEFT JOIN mic2.employees checker ON checker.id=mc.checked_by GROUP BY mc.id,p.product_code,p.product_name,creator.full_name,checker.full_name ORDER BY p.product_name,mc.version_no DESC`);res.json({ok:true,cards:cards.rows});}catch(e){next(e);}
 });
-
-app.post('/api/qc/cards', authenticate, requirePermission('qc:cards:write'), async (req,res,next)=>{
-  const b=req.body||{},setupId=Number(b.setup_id);
-  const parameters=Array.isArray(b.parameters)?b.parameters:[];
-  if(!Number.isSafeInteger(setupId)||setupId<1||!parameters.length||parameters.length>100||
-    parameters.some(p=>!p||typeof p.parameter_name!=='string'||!p.parameter_name.trim())){
-    return res.status(400).json({ok:false,message:'Выберите наладку и добавьте хотя бы один параметр измерения'});
-  }
-  const c=await pool.connect();
-  try{
-    await c.query('BEGIN');
-    const setup=await c.query('SELECT id FROM mic2.product_setups WHERE id=$1 AND is_active FOR UPDATE',[setupId]);
-    if(!setup.rowCount)throw Object.assign(new Error('Активная наладка не найдена'),{status:404});
-    const version=await c.query('SELECT COALESCE(MAX(version_no),0)+1 AS n FROM mic2.measurement_cards WHERE setup_id=$1',[setupId]);
-    const card=await c.query(`
-      INSERT INTO mic2.measurement_cards(setup_id,version_no,source_type,review_status,created_by)
-      VALUES($1,$2,'manual','draft',$3) RETURNING id,setup_id,version_no,review_status
-    `,[setupId,version.rows[0].n,req.employee.id]);
-    for(let i=0;i<parameters.length;i++){
-      const p=parameters[i];
-      await c.query(`
-        INSERT INTO mic2.measurement_parameters(card_id,sort_order,parameter_name,nominal_value,tolerance_text,unit,instruction)
-        VALUES($1,$2,$3,$4,$5,$6,$7)
-      `,[card.rows[0].id,i+1,p.parameter_name.trim(),p.nominal_value||null,p.tolerance_text||null,p.unit||null,p.instruction||null]);
-    }
-    await c.query('COMMIT');
-    res.status(201).json({ok:true,card:card.rows[0]});
-  }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.status)return res.status(e.status).json({ok:false,message:e.message});next(e);}
-  finally{c.release();}
+app.post('/api/qc/cards', authenticate, requirePermission('qc:cards:write'), async(req,res,next)=>{
+ const b=req.body||{},productId=Number(b.product_id),parameters=Array.isArray(b.parameters)?b.parameters:[];
+ if(!Number.isSafeInteger(productId)||productId<1||!parameters.length||parameters.length>100||parameters.some(p=>!p||typeof p.parameter_name!=='string'||!p.parameter_name.trim()))return res.status(400).json({ok:false,message:'Выберите изделие и добавьте хотя бы один измеряемый параметр'});
+ const c=await pool.connect();try{await c.query('BEGIN');const p=await c.query('SELECT id FROM mic2.products WHERE id=$1 AND is_active FOR UPDATE',[productId]);if(!p.rowCount)throw Object.assign(new Error('Активное изделие не найдено'),{status:404});
+ const v=await c.query('SELECT COALESCE(MAX(version_no),0)+1 AS n FROM mic2.measurement_cards WHERE product_id=$1',[productId]);
+ const card=await c.query("INSERT INTO mic2.measurement_cards(product_id,version_no,source_type,review_status,created_by) VALUES($1,$2,'manual','draft',$3) RETURNING id,product_id,version_no,review_status",[productId,v.rows[0].n,req.employee.id]);
+ for(let i=0;i<parameters.length;i++){const x=parameters[i];await c.query('INSERT INTO mic2.measurement_parameters(card_id,sort_order,parameter_name,nominal_value,tolerance_text,unit,instruction) VALUES($1,$2,$3,$4,$5,$6,$7)',[card.rows[0].id,i+1,x.parameter_name.trim(),x.nominal_value||null,x.tolerance_text||null,x.unit||null,x.instruction||null]);}
+ await c.query('COMMIT');res.status(201).json({ok:true,card:card.rows[0]});
+ }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.status)return res.status(e.status).json({ok:false,message:e.message});next(e);}finally{c.release();}
 });
 
 app.post('/api/qc/cards/:id/activate', authenticate, requirePermission('qc:cards:write'), async (req,res,next)=>{
@@ -839,12 +808,12 @@ app.post('/api/qc/cards/:id/activate', authenticate, requirePermission('qc:cards
   const c=await pool.connect();
   try{
     await c.query('BEGIN');
-    const card=await c.query('SELECT id,setup_id,review_status FROM mic2.measurement_cards WHERE id=$1 FOR UPDATE',[cardId]);
+    const card=await c.query('SELECT id,product_id,review_status FROM mic2.measurement_cards WHERE id=$1 FOR UPDATE',[cardId]);
     if(!card.rowCount)throw Object.assign(new Error('Карта измерений не найдена'),{status:404});
     if(!['draft','checked'].includes(card.rows[0].review_status))throw Object.assign(new Error('Эту карту нельзя активировать'),{status:409});
     const count=await c.query('SELECT COUNT(*)::int AS n FROM mic2.measurement_parameters WHERE card_id=$1',[cardId]);
     if(count.rows[0].n<1)throw Object.assign(new Error('В карте нет параметров измерения'),{status:409});
-    await c.query("UPDATE mic2.measurement_cards SET review_status='archived' WHERE setup_id=$1 AND review_status='active'",[card.rows[0].setup_id]);
+    await c.query("UPDATE mic2.measurement_cards SET review_status='archived' WHERE product_id=$1 AND review_status='active'",[card.rows[0].product_id]);
     await c.query("UPDATE mic2.measurement_cards SET review_status='active',checked_by=$2,checked_at=now() WHERE id=$1",[cardId,req.employee.id]);
     await c.query('COMMIT');
     res.json({ok:true,message:'Карта измерений активирована'});
