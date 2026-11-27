@@ -200,3 +200,13 @@ button{cursor:pointer}button:disabled{opacity:.55;cursor:wait}.tableActions{disp
 .qcBoxActions{display:flex;align-items:center;gap:5px;flex-wrap:wrap;min-width:150px}
 .qcBoxActions .smallButton{padding:6px 8px;font-size:9px;white-space:nowrap}
 .qcBoxActions .status{white-space:nowrap}
+
+.qcHomeHero{gap:24px}
+.qcHomeHeroText{max-width:58%}
+.qcHomeHeroAction{position:relative;z-index:2;display:flex;flex-direction:column;gap:8px;width:min(390px,40%);padding:16px 18px;border:1px solid #47736d;border-radius:12px;background:rgba(11,27,33,.42)}
+.qcHomeHeroAction>span{font-size:8px;letter-spacing:.14em;font-weight:700;color:#83cbbb}
+.qcHomeHeroAction>b{font-size:12px;line-height:1.5;color:#dcebe6;font-weight:600}
+.qcHomeHeroAction button{align-self:flex-start;border:1px solid #72b8a3;border-radius:7px;padding:8px 11px;background:#32665a;color:#f0fbf6;font-size:10px;font-weight:700;cursor:pointer}
+.qcHomeHeroAction button:hover{background:#3c796a}
+.qcHomeHeroAction .qcHomeSecondaryAction{background:transparent;border-color:#47616a;color:#b6d2ce;font-weight:500}
+@media(max-width:700px){.qcHomeHero{align-items:stretch;flex-direction:column;gap:16px}.qcHomeHeroText{max-width:none}.qcHomeHeroAction{width:auto}.qcHomeHeroAction button{align-self:stretch}}
