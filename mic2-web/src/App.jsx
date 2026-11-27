@@ -103,11 +103,15 @@ function InspectionHistory({data,refresh}){
 function RoleLinks({nav,onNavigate}){return <><div className="section"><div><h2>Рабочие разделы</h2></div></div><div className="tiles">{nav.filter(([id])=>id!=='overview').map(([id,ic,label])=><button className="tile" key={id} type="button" onClick={()=>onNavigate(id)}><i>{ic}</i><b>{label}</b></button>)}</div></>;}
 function RoleOverview({title,description,metrics,nav,onNavigate}){
  const links=nav.filter(([id])=>id!=='overview');
- const urgent=Number(metrics[0]?.[1]||0)>0||Number(metrics[1]?.[1]||0)>0;
+ const pendingCycles=Number(metrics[0]?.[1]||0), pendingQuantity=Number(metrics[1]?.[1]||0);
+ const urgent=pendingCycles>0||pendingQuantity>0;
+ const primaryTarget=urgent?'qc':(links.some(([id])=>id==='qc-fly')?'qc-fly':'qc-history');
+ const primaryLabel=urgent?'Разобрать очередь ОТК':'Открыть контроль смены';
+ const primaryNote=urgent?pendingCycles+' циклов · '+pendingQuantity.toLocaleString('ru-RU')+' деталей ожидают контроля':'Очередь сейчас свободна — можно проверить план контроля и историю';
  const icons={'qc':'✓','qc-history':'◷','qc-fly':'⌁','qc-production':'▣','qc-calendar':'▦','qc-boxes':'▤'};
  const descriptions={'qc':'Партии, ожидающие проверки и решения контролёра','qc-history':'Результаты проверок и история действий','qc-fly':'Контрольные точки по времени смены','qc-production':'Текущие циклы, операторы и выпуск','qc-calendar':'Назначенные смены и посещаемость','qc-boxes':'Принятая продукция и упаковка по нормам'};
  return <div className="qcHome">
-  <section className="qcHomeHero"><div className="qcHomeHeroText"><span className="eyebrow">MIC 2.0 · КАЧЕСТВО</span><h2>{title}</h2><p>{description||'Контроль качества, производственные проверки и прослеживаемость готовой продукции'}</p><div className="qcHomeHeroStatus"><span className={'qcHomePulse '+(urgent?'attention':'')}></span>{urgent?'Есть задачи, требующие внимания':'Критичных задач в очереди нет'}</div></div><div className="qcHomeHeroArt"><div className="qcHomeRing"><span>ОТК</span><b>✓</b></div><i className="qcHomeOrbit one"></i><i className="qcHomeOrbit two"></i></div></section>
+  <section className="qcHomeHero"><div className="qcHomeHeroText"><span className="eyebrow">MIC 2.0 · РАБОЧАЯ СМЕНА</span><h2>{title}</h2><p>{description||'Оперативная панель контроля качества и задач смены'}</p><div className="qcHomeHeroStatus"><span className={'qcHomePulse '+(urgent?'attention':'')}></span>{urgent?'Требуется внимание: есть продукция в очереди':'Очередь контроля свободна'}</div></div><div className="qcHomeHeroAction"><span>СЛЕДУЮЩЕЕ ДЕЙСТВИЕ</span><b>{primaryNote}</b><button type="button" onClick={()=>onNavigate(primaryTarget)}>{primaryLabel} ↗</button><button type="button" className="qcHomeSecondaryAction" onClick={()=>onNavigate('qc-fly')}>Летучий контроль ↗</button></div></section>
   <div className="qcHomeSectionTitle"><div><h3>Состояние контроля</h3><p>Оперативные показатели на текущий момент</p></div><span>ОБНОВЛЯЕТСЯ ИЗ СИСТЕМЫ</span></div>
   <div className="qcHomeMetrics">{metrics.map(([label,value,note,target],i)=><button type="button" className={'qcHomeMetric metricTone'+i} key={label} onClick={()=>onNavigate(target)}><span className="qcHomeMetricIcon">{['◉','▤','✓','⌁'][i]}</span><span className="qcHomeMetricLabel">{label}</span><b>{value}</b><small>{note}</small><span className="qcHomeMetricArrow">Открыть раздел ↗</span></button>)}</div>
   <div className="qcHomeSectionTitle"><div><h3>Рабочие инструменты</h3><p>Быстрый переход к основным задачам контролёра</p></div></div>
