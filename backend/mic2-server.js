@@ -973,6 +973,7 @@ app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), asy
       SELECT c.id AS cycle_id,c.bin_id,c.cycle_no,c.product_name_snapshot,c.product_code_snapshot,
         ''::text AS setup_code_snapshot,e.full_name AS responsible_name,
         c.card_id AS card_id,
+        (COALESCE((SELECT first_piece_required FROM mic2.qc_control_schedules WHERE product_id=c.product_id),TRUE) AND NOT EXISTS(SELECT 1 FROM mic2.qc_inspections qi WHERE qi.cycle_id=c.id AND qi.inspection_type='first_piece')) AS first_piece_pending,
         COALESCE(card_params.parameters,'[]'::json) AS measurement_parameters,
         COALESCE(q.quantity,0)::int AS pending_quantity,
         COALESCE(d.quantity,0)::int AS reserved_defect_quantity,
