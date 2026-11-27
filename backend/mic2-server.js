@@ -1229,7 +1229,7 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
     const balances=await c.query(`
       SELECT
         COALESCE((SELECT quantity FROM mic2.v_cycle_quantity_balances WHERE cycle_id=$1 AND bucket=$2),0)::int AS pending,
-        COALESCE((SELECT SUM(confirmed_quantity) FROM mic2.defects WHERE cycle_id=$1 AND defect_status IN ('awaiting_decision','active')),0)::int AS reserved
+        CASE WHEN $2='rework_pending_qc' THEN 0 ELSE COALESCE((SELECT SUM(confirmed_quantity) FROM mic2.defects WHERE cycle_id=$1 AND defect_status IN ('awaiting_decision','active')),0)::int END AS reserved
     `,[cycleId,sourceBucket]);
     const available=Math.max(0,balances.rows[0].pending-balances.rows[0].reserved);
     if(good+defective>available)throw Object.assign(new Error(`Для контроля доступно только ${available} деталей`),{status:409});
