@@ -1088,7 +1088,20 @@ app.get('/api/qc/isolator', authenticate, requirePermission('qc:defects:read'), 
    ) x ON TRUE
    WHERE x.quantity>0
    ORDER BY d.confirmed_at,d.id`);
-  res.json({ok:true,items:r.rows});
+  const rework=await pool.query(`
+   SELECT d.id AS defect_id,d.cycle_id,d.confirmed_quantity,d.defect_description,d.confirmed_at,
+    c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,
+    GREATEST(COALESCE(b.quantity,0),0)::int AS quantity,
+    COALESCE(rr.quantity_sent,0)::int AS quantity_sent
+   FROM mic2.defects d
+   JOIN mic2.production_cycles c ON c.id=d.cycle_id
+   JOIN LATERAL(SELECT quantity FROM mic2.v_cycle_quantity_balances WHERE cycle_id=d.cycle_id AND bucket='rework') b ON TRUE
+   LEFT JOIN LATERAL(SELECT SUM(quantity_sent)::int AS quantity_sent FROM mic2.rework_records WHERE defect_id=d.id) rr ON TRUE
+   WHERE EXISTS(SELECT 1 FROM mic2.cycle_quantity_movements m WHERE m.defect_id=d.id AND m.to_bucket='rework')
+    AND COALESCE(b.quantity,0)>0
+   ORDER BY d.confirmed_at,d.id
+  `);
+  res.json({ok:true,items:r.rows,rework_items:rework.rows});
  }catch(e){next(e);}
 });
 app.post('/api/qc/isolator/:id/movements', authenticate, requirePermission('qc:defects:decide'), async (req,res,next)=>{
