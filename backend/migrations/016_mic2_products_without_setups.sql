@@ -25,7 +25,7 @@ ALTER TABLE mic2.production_cycles
   DROP CONSTRAINT IF EXISTS production_cycles_card_setup_fk;
 
 -- Remove every remaining constraint that depends on obsolete setup_id columns.
-DO $
+DO $$
 DECLARE r RECORD;
 BEGIN
   FOR r IN
