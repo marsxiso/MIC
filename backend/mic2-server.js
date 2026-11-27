@@ -615,41 +615,59 @@ app.put('/api/qc/control-schedules/:productId', authenticate, requirePermission(
 app.get('/api/qc/fly-control', authenticate, requirePermission('qc:fly:read'), async(req,res,next)=>{
  try{
   const ownOnly=req.employee.role_code==='qc_controller';
-  const r=await pool.query(`
-   SELECT f.id,f.inspection_id,f.sample_quantity,f.inspection_result,f.defect_quantity,
-    f.defect_description,f.action_required,f.created_at,i.cycle_id,i.comment,
-    c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,''::text AS setup_code_snapshot,
-    e.full_name AS controller_name,mc.version_no AS card_version,
-    (SELECT COUNT(*)::int FROM mic2.qc_measurement_results mr WHERE mr.inspection_id=i.id) AS measured_parameters
-   FROM mic2.qc_fly_control_events f
-   JOIN mic2.qc_inspections i ON i.id=f.inspection_id
-   JOIN mic2.production_cycles c ON c.id=i.cycle_id
-   JOIN mic2.employees e ON e.id=i.controller_id
-   LEFT JOIN mic2.measurement_cards mc ON mc.id=i.card_id
-   WHERE (NOT $1 OR i.controller_id=$2)
-   ORDER BY f.created_at DESC LIMIT 300
-  `,[ownOnly,req.employee.id]);
-  const due=await pool.query(`
-   SELECT c.id AS cycle_id,c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,
-    e.full_name AS operator_name,mc.version_no AS card_version,
-    COALESCE(outp.output_quantity,0)::int AS output_quantity,
-    date_trunc('day',now())+interval '8 hours'+floor(GREATEST(0,extract(epoch FROM (now()-(date_trunc('day',now())+interval '8 hours')))/10800))*interval '3 hours' AS scheduled_for
-   FROM mic2.production_cycles c
-   JOIN mic2.employees e ON e.id=c.responsible_employee_id
-   LEFT JOIN mic2.measurement_cards mc ON mc.id=c.card_id
-   LEFT JOIN LATERAL(SELECT COALESCE(SUM(quantity),0)::int AS output_quantity FROM mic2.production_output_entries WHERE cycle_id=c.id) outp ON TRUE
-   WHERE c.cycle_status='active' AND c.production_finished_at IS NULL
-    AND now()>=date_trunc('day',now())+interval '8 hours'
-    AND date_trunc('day',now())+interval '8 hours'+floor(GREATEST(0,extract(epoch FROM (now()-(date_trunc('day',now())+interval '8 hours')))/10800))*interval '3 hours'
-      < COALESCE((SELECT sa.ends_at FROM mic2.shift_assignments sa WHERE sa.employee_id=c.responsible_employee_id AND sa.shift_date=CURRENT_DATE ORDER BY sa.ends_at DESC NULLS LAST LIMIT 1),date_trunc('day',now())+interval '20 hours')
-    AND NOT EXISTS(SELECT 1 FROM mic2.qc_fly_control_events f JOIN mic2.qc_inspections i ON i.id=f.inspection_id
-      WHERE i.cycle_id=c.id AND f.scheduled_for=date_trunc('day',now())+interval '8 hours'+floor(GREATEST(0,extract(epoch FROM (now()-(date_trunc('day',now())+interval '8 hours')))/10800))*interval '3 hours')
-   ORDER BY c.started_at,c.bin_id
+  const created=await pool.query(`
+   WITH active AS (
+    SELECT c.id AS cycle_id,date_trunc('day',now())+interval '8 hours' AS shift_start,
+     COALESCE((SELECT sa.ends_at FROM mic2.shift_assignments sa WHERE sa.employee_id=c.responsible_employee_id AND sa.shift_date=CURRENT_DATE ORDER BY sa.ends_at DESC NULLS LAST LIMIT 1),date_trunc('day',now())+interval '20 hours') AS shift_end
+    FROM mic2.production_cycles c WHERE c.cycle_status='active' AND c.production_finished_at IS NULL
+   ), slots AS (
+    SELECT a.cycle_id,g.slot AS scheduled_for,LEAST(g.slot+interval '3 hours',a.shift_end) AS window_end
+    FROM active a CROSS JOIN LATERAL generate_series(a.shift_start,a.shift_end-interval '1 microsecond',interval '3 hours') g(slot)
+    WHERE a.shift_end>a.shift_start
+   )
+   INSERT INTO mic2.qc_fly_control_schedule_events(cycle_id,scheduled_for,window_end)
+   SELECT cycle_id,scheduled_for,window_end FROM slots
+   ON CONFLICT(cycle_id,scheduled_for) DO NOTHING RETURNING id
   `);
-  res.json({ok:true,checks:r.rows,active_due:due.rows});
+  if(created.rowCount)await pool.query(`INSERT INTO mic2.qc_fly_control_journal(schedule_event_id,action,details)
+   SELECT unnest($1::bigint[]),'scheduled','{"source":"automatic_schedule"}'::jsonb`,[created.rows.map(x=>x.id)]);
+  const missed=await pool.query(`UPDATE mic2.qc_fly_control_schedule_events SET status='missed',updated_at=now()
+   WHERE status='pending' AND window_end<=now() RETURNING id`);
+  if(missed.rowCount)await pool.query(`INSERT INTO mic2.qc_fly_control_journal(schedule_event_id,action,details)
+   SELECT unnest($1::bigint[]),'missed','{"reason":"window_expired_without_inspection"}'::jsonb`,[missed.rows.map(x=>x.id)]);
+  const completed=await pool.query(`UPDATE mic2.qc_fly_control_schedule_events se
+   SET status='completed',completed_inspection_id=i.id,updated_at=now()
+   FROM mic2.qc_fly_control_events f JOIN mic2.qc_inspections i ON i.id=f.inspection_id
+   WHERE se.cycle_id=i.cycle_id AND se.scheduled_for=f.scheduled_for AND se.status<>'completed'
+   RETURNING se.id`);
+  if(completed.rowCount)await pool.query(`INSERT INTO mic2.qc_fly_control_journal(schedule_event_id,action,details)
+   SELECT unnest($1::bigint[]),'completed','{"source":"inspection_reconciliation"}'::jsonb`,[completed.rows.map(x=>x.id)]);
+  const [checks,schedule,journal]=await Promise.all([
+   pool.query(`SELECT f.id,f.inspection_id,f.sample_quantity,f.inspection_result,f.defect_quantity,f.defect_description,f.action_required,f.created_at,i.cycle_id,i.comment,
+    c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,''::text AS setup_code_snapshot,e.full_name AS controller_name,mc.version_no AS card_version,
+    (SELECT COUNT(*)::int FROM mic2.qc_measurement_results mr WHERE mr.inspection_id=i.id) AS measured_parameters
+    FROM mic2.qc_fly_control_events f JOIN mic2.qc_inspections i ON i.id=f.inspection_id JOIN mic2.production_cycles c ON c.id=i.cycle_id
+    JOIN mic2.employees e ON e.id=i.controller_id LEFT JOIN mic2.measurement_cards mc ON mc.id=i.card_id
+    WHERE (NOT $1 OR i.controller_id=$2) ORDER BY f.created_at DESC LIMIT 300`,[ownOnly,req.employee.id]),
+   pool.query(`SELECT se.id,se.cycle_id,se.scheduled_for,se.window_end,se.status,se.completed_inspection_id,c.bin_id,c.cycle_no,
+    c.product_code_snapshot,c.product_name_snapshot,op.full_name AS operator_name,
+    EXTRACT(EPOCH FROM (se.window_end-now()))::int AS seconds_remaining,
+    f.id AS fly_event_id,f.inspection_result,f.defect_quantity,qc.full_name AS controller_name
+    FROM mic2.qc_fly_control_schedule_events se JOIN mic2.production_cycles c ON c.id=se.cycle_id
+    JOIN mic2.employees op ON op.id=c.responsible_employee_id
+    LEFT JOIN mic2.qc_inspections i ON i.id=se.completed_inspection_id LEFT JOIN mic2.employees qc ON qc.id=i.controller_id
+    LEFT JOIN mic2.qc_fly_control_events f ON f.inspection_id=i.id
+    WHERE se.scheduled_for::date=CURRENT_DATE AND (c.cycle_status='active' OR se.status IN ('missed','completed'))
+    ORDER BY se.scheduled_for DESC,c.bin_id`),
+   pool.query(`SELECT j.id,j.action,j.details,j.created_at,se.scheduled_for,se.cycle_id,c.bin_id,c.product_name_snapshot,e.full_name AS actor_name
+    FROM mic2.qc_fly_control_journal j JOIN mic2.qc_fly_control_schedule_events se ON se.id=j.schedule_event_id
+    JOIN mic2.production_cycles c ON c.id=se.cycle_id LEFT JOIN mic2.employees e ON e.id=j.actor_id
+    WHERE se.scheduled_for::date=CURRENT_DATE ORDER BY j.created_at DESC LIMIT 500`)
+  ]);
+  const due=schedule.rows.filter(x=>x.status==='pending'&&new Date(x.scheduled_for)<=new Date()&&new Date(x.window_end)>new Date());
+  res.json({ok:true,checks:checks.rows,schedule:schedule.rows,journal:journal.rows,active_due:due});
  }catch(e){next(e);}
 });
-
 
 app.get('/api/qc/fly-control/:id', authenticate, requirePermission('qc:fly:read'), async(req,res,next)=>{
  const id=Number(req.params.id);
@@ -736,6 +754,16 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
    INSERT INTO mic2.qc_fly_control_events(inspection_id,sample_quantity,inspection_result,defect_quantity,defect_description,action_required,scheduled_for)
    VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id
   `,[inspection.rows[0].id,sample,result,defectQty,description||null,actionRequired||result==='fail',slot]);
+  const scheduled=await c.query(`
+   INSERT INTO mic2.qc_fly_control_schedule_events(cycle_id,scheduled_for,window_end,status,completed_inspection_id)
+   VALUES($1,$2,LEAST($2::timestamptz+interval '3 hours',$3::timestamptz),'completed',$4)
+   ON CONFLICT(cycle_id,scheduled_for) DO UPDATE SET status='completed',completed_inspection_id=EXCLUDED.completed_inspection_id,updated_at=now()
+   RETURNING id
+  `,[cycleId,slot,cycle.rows[0].shift_ends_at,inspection.rows[0].id]);
+  await c.query(`
+   INSERT INTO mic2.qc_fly_control_journal(schedule_event_id,actor_id,action,details)
+   VALUES($1,$2,'completed',$3::jsonb)
+  `,[scheduled.rows[0].id,req.employee.id,JSON.stringify({inspection_id:inspection.rows[0].id,event_id:event.rows[0].id,inspection_result:result,sample_quantity:sample,defect_quantity:defectQty})]);
   await c.query(`
    INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,after_data,reason)
    VALUES($1,$2,'qc_fly_control','qc_inspection',$3,$4::jsonb,$5)
