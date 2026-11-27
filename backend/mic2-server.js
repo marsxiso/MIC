@@ -1128,6 +1128,29 @@ app.post('/api/qc/isolator/:id/movements', authenticate, requirePermission('qc:d
  }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.status)return res.status(e.status).json({ok:false,message:e.message});next(e);}
  finally{c.release();}
 });
+app.post('/api/qc/rework/:id/return-to-qc', authenticate, requirePermission('qc:defects:decide'), async(req,res,next)=>{
+ const defectId=Number(req.params.id),c=await pool.connect();
+ if(!Number.isSafeInteger(defectId)||defectId<1)return res.status(400).json({ok:false,message:'Некорректная запись доработки'});
+ try{
+  await c.query('BEGIN');
+  const d=await c.query("SELECT id,cycle_id FROM mic2.defects WHERE id=$1 FOR UPDATE",[defectId]);
+  if(!d.rowCount)throw Object.assign(new Error('Запись дефекта не найдена'),{status:404});
+  const stock=await c.query(`SELECT COALESCE(SUM(CASE WHEN to_bucket='rework' THEN quantity WHEN from_bucket='rework' THEN -quantity ELSE 0 END),0)::int AS quantity FROM mic2.cycle_quantity_movements WHERE defect_id=$1`,[defectId]);
+  const quantity=stock.rows[0].quantity;
+  if(quantity<1)throw Object.assign(new Error('На доработке нет деталей для возврата'),{status:409});
+  await c.query(`INSERT INTO mic2.cycle_quantity_movements(cycle_id,movement_type,from_bucket,to_bucket,quantity,defect_id,entered_by,note)
+   VALUES($1,'rework_returned','rework','production_pending_qc',$2,$3,$4,'Возврат после доработки на повторную приёмку ОТК')`,[d.rows[0].cycle_id,quantity,defectId,req.employee.id]);
+  await c.query(`UPDATE mic2.rework_records SET quantity_returned=quantity_sent,returned_at=now()
+   WHERE defect_id=$1 AND returned_at IS NULL`,[defectId]);
+  await c.query(`INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,before_data,after_data,reason)
+   VALUES($1,$2,'rework_returned_to_qc','defect',$3,$4::jsonb,$5::jsonb,$6)`,
+   [req.employee.id,req.employee.role_code,defectId,JSON.stringify({rework_quantity:quantity}),JSON.stringify({returned_to_qc:quantity}),req.body?.note||null]);
+  await c.query('COMMIT');
+  res.status(201).json({ok:true,returned_quantity:quantity,message:'Детали возвращены в очередь ОТК для повторной приёмки'});
+ }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.status)return res.status(e.status).json({ok:false,message:e.message});next(e);}
+ finally{c.release();}
+});
+
 app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), async (_req,res,next)=>{
   try {
     const r=await pool.query(`
