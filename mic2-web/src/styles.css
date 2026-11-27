@@ -481,9 +481,11 @@ td small{line-height:1.45}
 
 /* Isolator inventory and disposition form */
 .isolatorTable{min-width:1040px;table-layout:fixed}
-.isolatorTable th:nth-child(1){width:7%}.isolatorTable th:nth-child(2){width:17%}.isolatorTable th:nth-child(3){width:25%}.isolatorTable th:nth-child(4){width:9%}.isolatorTable th:nth-child(5){width:9%}.isolatorTable th:nth-child(6){width:33%}
+.isolatorTable th:nth-child(1){width:7%}.isolatorTable th:nth-child(2){width:17%}.isolatorTable th:nth-child(3){width:25%}.isolatorTable th:nth-child(4){width:9%}.isolatorTable th:nth-child(5){width:8%}.isolatorTable th:nth-child(6){width:17%}.isolatorTable th:nth-child(7){width:26%}
 .isolatorTable td{vertical-align:middle}
 .isolatorDecisionForm{display:grid;grid-template-columns:minmax(145px,1.2fr) 65px minmax(120px,1fr) 112px;gap:7px;align-items:center}
 .isolatorDecisionForm select,.isolatorDecisionForm input{box-sizing:border-box;width:100%;min-width:0;height:34px;margin:0;padding:0 9px;border:1px solid #3b555d;border-radius:7px;background:#102027;color:#e4eeee;font:inherit;font-size:11px}
 .isolatorDecisionForm .smallButton{height:34px;min-width:0;padding:0 9px;white-space:nowrap}
 @media(max-width:1000px){.isolatorDecisionForm{grid-template-columns:minmax(130px,1fr) 60px minmax(110px,1fr)}.isolatorDecisionForm button{grid-column:1/-1;justify-self:end}}
+
+.isolatorMovements{font-size:10px;line-height:1.45}.isolatorMovements div+div{margin-top:6px;padding-top:6px;border-top:1px solid #2b4148}.isolatorMovements span,.isolatorMovements small{display:block}.isolatorMovements small{color:#829ba2;margin-top:2px}
