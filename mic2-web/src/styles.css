@@ -86,3 +86,13 @@ button{cursor:pointer}button:disabled{opacity:.55;cursor:wait}.tableActions{disp
 .measurementCardDetails .sheetPreview th,.measurementCardDetails .sheetPreview td{padding:8px 14px;white-space:nowrap}
 .measurementCardDetails>.primary{margin-top:12px}
 @media(max-width:600px){.measurementCardSummary{padding:11px;gap:8px}.measurementCardName b{font-size:11px}.measurementCardName small{font-size:9px}.measurementCardDetails .sheetPreview{width:100%}.measurementCardDetails .sheetPreview .tableWrap{display:block;width:100%}}
+
+/* Unified, aligned measurement details */
+.measurementCardDetails{padding:14px 16px 16px;border-top:1px solid #30464d}
+.measurementDetailsTable{width:100%;border-radius:9px}
+.measurementDetailsTable table{width:100%;min-width:420px;table-layout:auto}
+.measurementDetailsTable th,.measurementDetailsTable td{padding:10px 14px}
+.measurementDetailsTable th:first-child,.measurementDetailsTable td:first-child{width:150px;color:#9fc9bf}
+.measurementDetailsTable th:nth-child(2),.measurementDetailsTable td:nth-child(2){width:64px}
+.measurementCardChevron{font-size:10px;width:auto;white-space:nowrap;color:#91d5c1}
+@media(max-width:600px){.measurementCardDetails{padding:10px}.measurementDetailsTable th,.measurementDetailsTable td{padding:8px}.measurementDetailsTable th:first-child,.measurementDetailsTable td:first-child{width:105px}}
