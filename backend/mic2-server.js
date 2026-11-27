@@ -699,7 +699,7 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
   await c.query('BEGIN');
   const cycle=await c.query("SELECT pc.id,pc.card_id,(SELECT COALESCE(SUM(quantity),0)::int FROM mic2.production_output_entries WHERE cycle_id=pc.id) AS output_quantity,COALESCE((SELECT sa.ends_at FROM mic2.shift_assignments sa WHERE sa.employee_id=pc.responsible_employee_id AND sa.shift_date=CURRENT_DATE ORDER BY sa.ends_at DESC NULLS LAST LIMIT 1),date_trunc('day',now())+interval '20 hours') AS shift_ends_at,date_trunc('day',now())+interval '8 hours'+floor(GREATEST(0,extract(epoch FROM (now()-(date_trunc('day',now())+interval '8 hours')))/10800))*interval '3 hours' AS current_fly_slot FROM mic2.production_cycles pc WHERE pc.id=$1 AND pc.cycle_status='active' AND pc.production_finished_at IS NULL FOR UPDATE OF pc",[cycleId]);
   if(!cycle.rowCount)throw Object.assign(new Error('Активный производственный цикл не найден'),{status:404});
-  if(sample>cycle.rows[0].output_quantity)throw Object.assign(new Error('Размер выборки не может превышать выпущенное количество деталей'),{status:409});
+  // Fly-control sample size is independent of the quantity entered as production output.
   const slot=cycle.rows[0].current_fly_slot;
   const slotCheck=await c.query('SELECT now()>=$1::timestamptz AND $1::timestamptz<$2::timestamptz AS allowed',[slot,cycle.rows[0].shift_ends_at]);
   if(!slotCheck.rows[0].allowed)throw Object.assign(new Error('Летучий контроль проводится по расписанию: в 08:00 и далее каждые 3 часа до конца смены'),{status:409});
