@@ -691,9 +691,9 @@ app.post('/api/qc/fly-control', authenticate, requirePermission('qc:fly:write'),
    throw Object.assign(new Error('В измерениях есть параметры не из выбранной установки карты этого ящика'),{status:400});
   if(measurements.length&&!cardId)throw Object.assign(new Error('Для этого цикла не назначена карта измерений'),{status:400});
   const inspection=await c.query(`
-   INSERT INTO mic2.qc_inspections(cycle_id,controller_id,inspection_type,card_id,completed_at,comment)
-   VALUES($1,$2,'fly_control',$3,now(),$4) RETURNING id
-  `,[cycleId,req.employee.id,cardId,comment||null]);
+   INSERT INTO mic2.qc_inspections(cycle_id,controller_id,inspection_type,card_id,installation_no,completed_at,comment)
+   VALUES($1,$2,'fly_control',$3,$4,now(),$5) RETURNING id
+  `,[cycleId,req.employee.id,cardId,installationNo,comment||null]);
   for(const m of measurements)await c.query(`
    INSERT INTO mic2.qc_measurement_results(inspection_id,parameter_id,measured_value,comment)
    VALUES($1,$2,$3,$4)
