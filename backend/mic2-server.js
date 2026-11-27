@@ -1186,7 +1186,7 @@ app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), asy
         COALESCE(card_params.parameters,'[]'::json) AS measurement_parameters,
         COALESCE(qr.quantity,0)::int AS pending_quantity,0::int AS reserved_defect_quantity,
         COALESCE(qr.quantity,0)::int AS available_quantity,'rework'::text AS source_type,
-        rr.id AS rework_record_id
+        MIN(rr.id) AS rework_record_id
       FROM mic2.rework_records rr
       JOIN mic2.defects d0 ON d0.id=rr.defect_id
       JOIN mic2.production_cycles c ON c.id=d0.cycle_id
@@ -1194,6 +1194,7 @@ app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), asy
         FROM mic2.cycle_quantity_movements WHERE defect_id=d0.id) qr ON TRUE
       LEFT JOIN LATERAL(SELECT json_agg(json_build_object('id',mp.id,'parameter_name',mp.parameter_name,'installation_no',mp.installation_no,'drawing_dimension',COALESCE(mp.drawing_dimension,mp.nominal_value),'dimension_prefix',mp.dimension_prefix,'upper_deviation',mp.upper_deviation,'lower_deviation',mp.lower_deviation,'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,'unit',mp.unit,'instruction',mp.instruction) ORDER BY mp.sort_order) AS parameters FROM mic2.measurement_parameters mp WHERE mp.card_id=c.card_id) card_params ON TRUE
       WHERE qr.quantity>0
+      GROUP BY c.id,c.product_name_snapshot,c.product_code_snapshot,c.card_id,card_params.parameters,qr.quantity
       ORDER BY cycle_id
     `);
     res.json({ok:true,items:r.rows});
@@ -1246,9 +1247,9 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
     let defect=null;
     if(defective>0){
       const d=await c.query(`
-        INSERT INTO mic2.defects(cycle_id,confirmed_by,confirmed_quantity,defect_description,defect_status)
-        VALUES($1,$2,$3,$4,'active') RETURNING id,confirmed_quantity,defect_description,defect_status
-      `,[cycleId,req.employee.id,defective,description]);
+        INSERT INTO mic2.defects(cycle_id,confirmed_by,confirmed_quantity,defect_description,defect_status,source_bucket)
+        VALUES($1,$2,$3,$4,'active',$5) RETURNING id,confirmed_quantity,defect_description,defect_status
+      `,[cycleId,req.employee.id,defective,description,sourceBucket]);
       defect=d.rows[0];
       await c.query(`
         INSERT INTO mic2.cycle_quantity_movements(cycle_id,movement_type,from_bucket,to_bucket,quantity,defect_id,entered_by,note)
