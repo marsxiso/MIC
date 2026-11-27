@@ -1145,7 +1145,16 @@ app.get('/api/qc/finished-boxes', authenticate, requirePermission('qc:queue:read
    JOIN mic2.employees e ON e.id=fb.created_by
    ORDER BY fb.id DESC LIMIT 500
   `);
-  res.json({ok:true,boxes:r.rows});
+  const pending=await pool.query(`
+   SELECT c.id AS cycle_id,c.bin_id,c.product_name_snapshot,c.product_code_snapshot,
+    c.production_finished_at,COALESCE(q.quantity,0)::int AS packable_quantity,p.box_quantity_norm,
+    e.full_name AS responsible_name
+   FROM mic2.production_cycles c JOIN mic2.products p ON p.id=c.product_id
+   JOIN mic2.employees e ON e.id=c.responsible_employee_id
+   JOIN mic2.v_cycle_quantity_balances q ON q.cycle_id=c.id AND q.bucket='good_unboxed' AND q.quantity>0
+   WHERE c.cycle_status='active' ORDER BY c.started_at
+  `);
+  res.json({ok:true,boxes:r.rows,packable_cycles:pending.rows});
  }catch(e){next(e);}
 });
 
