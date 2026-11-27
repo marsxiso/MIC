@@ -523,7 +523,7 @@ app.get('/api/cnc/team-shifts', authenticate, requireRoles('cnc_operator'), asyn
  try{
   const r=await pool.query(`
    SELECT s.id,s.employee_id,e.full_name,s.shift_date,s.shift_code,s.starts_at,s.ends_at,
-    s.attendance_status,s.notes
+    s.attendance_status,s.attendance_note,s.actual_start_time,s.actual_end_time,s.notes
    FROM mic2.shift_assignments s
    JOIN mic2.employees e ON e.id=s.employee_id
    WHERE e.role_code='cnc_operator' AND e.account_status='active' AND e.terminated_at IS NULL
