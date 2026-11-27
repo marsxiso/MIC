@@ -180,7 +180,7 @@ app.get('/api/auth/me', authenticate, (req, res) => {
 
 const ROLE_ACCESS = Object.freeze({
   administrator: ['accounts:create', 'roles:read'],
-  production_manager: ['dashboard:read', 'products:read', 'products:write', 'bins:read', 'cycles:read', 'cycles:write', 'operators:assign', 'shift_schedule:read', 'shift_schedule:write'],
+  production_manager: ['dashboard:read', 'products:read', 'products:write', 'bins:read', 'cycles:read', 'cycles:write', 'output:manage', 'operators:assign', 'shift_schedule:read', 'shift_schedule:write'],
   cnc_operator: ['dashboard:read', 'bins:read', 'products:read', 'cycles:own:read', 'cycles:own:start', 'output:own:write', 'shift_schedule:own:read'],
   qc_controller: ['dashboard:read', 'qc:queue:read', 'qc:inspect:write', 'qc:own:read', 'qc:cards:read', 'qc:own:shifts', 'qc:production:read', 'qc:fly:read', 'qc:fly:write'],
   qc_manager: ['dashboard:read', 'qc:queue:read', 'qc:inspect:write', 'qc:all:read', 'qc:cards:read', 'qc:cards:write', 'qc:defects:read', 'qc:defects:decide', 'qc:own:shifts', 'qc:production:read', 'qc:fly:read', 'qc:fly:write', 'shift_schedule:read', 'shift_schedule:write'],
@@ -1044,10 +1044,10 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
 
 app.post('/api/bins', authenticate, requirePermission('bins:write'), async (req,res,next)=>{try{const r=await pool.query('INSERT INTO mic2.plastic_bins(created_by) VALUES($1) RETURNING id,bin_status,created_at',[req.employee.id]);res.status(201).json({ok:true,bin:r.rows[0]});}catch(e){next(e);}});
 
-app.post('/api/cycles/:id/output', authenticate, requirePermission('output:own:write'), async (req,res,next)=>{
+app.post('/api/cycles/:id/output', authenticate, requirePermission('output:own:write','output:manage'), async (req,res,next)=>{
   const quantity=Number(req.body?.quantity),finish=req.body?.finish===true; if(!Number.isSafeInteger(quantity)||quantity<0||(!finish&&quantity<1))return res.status(400).json({ok:false,message:'Укажите количество больше нуля или завершите изготовление без дополнительного выпуска'});
   const c=await pool.connect(); try { await c.query('BEGIN'); const cycle=await c.query("SELECT id,responsible_employee_id,production_finished_at FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' FOR UPDATE",[req.params.id]); if(!cycle.rowCount)throw Object.assign(new Error('Активный цикл не найден'),{status:404});
-    if(String(cycle.rows[0].responsible_employee_id)!==req.employee.id)throw Object.assign(new Error('Вы не являетесь ответственным оператором'),{status:403});
+    if(String(cycle.rows[0].responsible_employee_id)!==req.employee.id && req.employee.role_code!=='production_manager')throw Object.assign(new Error('Вы не являетесь ответственным оператором'),{status:403});
     if(cycle.rows[0].production_finished_at)throw Object.assign(new Error('Изготовление по этому ящику уже завершено'),{status:409});
     let entry={rows:[]}; if(quantity>0){entry=await c.query('INSERT INTO mic2.production_output_entries(cycle_id,operator_id,quantity,entered_by) VALUES($1,$2,$3,$4) RETURNING *',[req.params.id,cycle.rows[0].responsible_employee_id,quantity,req.employee.id]); await c.query("INSERT INTO mic2.cycle_quantity_movements(cycle_id,movement_type,to_bucket,quantity,entered_by,note) VALUES($1,'production_received','production_pending_qc',$2,$3,$4)",[req.params.id,quantity,req.employee.id,req.body?.note||null]);}
     if(finish)await c.query('UPDATE mic2.production_cycles SET production_finished_at=NOW() WHERE id=$1',[req.params.id]);
