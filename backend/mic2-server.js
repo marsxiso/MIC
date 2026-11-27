@@ -1095,7 +1095,7 @@ app.get('/api/qc/isolator', authenticate, requirePermission('qc:defects:read'), 
     COALESCE(rr.quantity_sent,0)::int AS quantity_sent
    FROM mic2.defects d
    JOIN mic2.production_cycles c ON c.id=d.cycle_id
-   JOIN LATERAL(SELECT quantity FROM mic2.v_cycle_quantity_balances WHERE cycle_id=d.cycle_id AND bucket='rework') b ON TRUE
+   LEFT JOIN LATERAL(SELECT COALESCE(SUM(CASE WHEN m.to_bucket='rework' THEN m.quantity WHEN m.from_bucket='rework' THEN -m.quantity ELSE 0 END),0)::int AS quantity FROM mic2.cycle_quantity_movements m WHERE m.defect_id=d.id) b ON TRUE
    LEFT JOIN LATERAL(SELECT SUM(quantity_sent)::int AS quantity_sent FROM mic2.rework_records WHERE defect_id=d.id) rr ON TRUE
    WHERE EXISTS(SELECT 1 FROM mic2.cycle_quantity_movements m WHERE m.defect_id=d.id AND m.to_bucket='rework')
     AND COALESCE(b.quantity,0)>0
