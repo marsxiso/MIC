@@ -68,17 +68,24 @@ function DrawingDimension({dimension,prefix,upper,lower,unit}){return <span clas
 function CardsTable({data,refresh,create,activate}){
  const cards=data.cards||[];
  const [expanded,setExpanded]=useState(null);
- return <><div className="section"><div><h2>Листы обмера</h2><p>Выберите изделие, чтобы открыть размеры и допуски карты.</p></div><div className="tableActions"><button className="secondary" onClick={refresh}>Обновить ↻</button><button className="primary" onClick={create}>Создать лист обмера</button></div></div>
- {cards.length?<div className="measurementCardList">{cards.map(c=><article className="measurementCardItem" key={c.id}>
+ return <><div className="section"><div><h2>Листы обмера</h2><p>Выберите изделие, чтобы посмотреть размеры и допуски.</p></div><div className="tableActions"><button className="secondary" onClick={refresh}>Обновить ↻</button><button className="primary" onClick={create}>Создать лист обмера</button></div></div>
+ {cards.length?<div className="measurementCardList">{cards.map(c=>{
+ const parameters=[...c.parameters].sort((a,b)=>(Number(a.installation_no)||1)-(Number(b.installation_no)||1)||(Number(a.id)||0)-(Number(b.id)||0));
+ return <article className="measurementCardItem" key={c.id}>
  <button type="button" className="measurementCardSummary" aria-expanded={expanded===c.id} onClick={()=>setExpanded(expanded===c.id?null:c.id)}>
  <span className="measurementCardName"><b>{c.product_code} — {c.product_name}</b><small>Версия {c.version_no} · {c.parameters.length} размеров · {new Date(c.created_at).toLocaleDateString('ru-RU')}</small></span>
- <span className={'status '+c.review_status}>{({draft:'Черновик',checked:'Проверена',active:'Действует',archived:'Архив'}[c.review_status]||c.review_status)}</span><span className="measurementCardChevron">{expanded===c.id?'−':'+'}</span>
+ <span className={'status '+c.review_status}>{({draft:'Черновик',checked:'Проверена',active:'Действует',archived:'Архив'}[c.review_status]||c.review_status)}</span><span className="measurementCardChevron">{expanded===c.id?'Скрыть':'Подробнее'} {expanded===c.id?'⌃':'⌄'}</span>
  </button>
  {expanded===c.id&&<div className="measurementCardDetails">
- {[...new Set(c.parameters.map(p=>Number(p.installation_no)||1))].sort((a,b)=>a-b).map(n=><section className="sheetPreview" key={n}><h3>Установка {n}</h3><div className="tableWrap"><table><thead><tr><th>№</th><th>Размер по КД</th></tr></thead><tbody>{c.parameters.filter(p=>(Number(p.installation_no)||1)===n).map((p,i)=><tr key={p.id}><td>{i+1}</td><td><DrawingDimension dimension={p.drawing_dimension||p.nominal_value||p.parameter_name} prefix={p.dimension_prefix} upper={p.upper_deviation} lower={p.lower_deviation} unit={p.unit}/></td></tr>)}</tbody></table></div></section>)}
+ <div className="tableWrap measurementDetailsTable"><table><thead><tr><th>Установка</th><th>№</th><th>Размер по КД</th></tr></thead><tbody>{parameters.map((p,i)=>{
+ const installation=Number(p.installation_no)||1;
+ const first=i===0||(Number(parameters[i-1].installation_no)||1)!==installation;
+ return <tr key={p.id}><td>{first?'Установка '+installation:''}</td><td>{first?1:i-parameters.findIndex(x=>(Number(x.installation_no)||1)===installation)+1}</td><td><DrawingDimension dimension={p.drawing_dimension||p.nominal_value||p.parameter_name} prefix={p.dimension_prefix} upper={p.upper_deviation} lower={p.lower_deviation} unit={p.unit}/></td></tr>;
+ })}</tbody></table></div>
  {c.review_status==='draft'&&<button className="primary" onClick={()=>activate(c.id)}>Проверить и активировать</button>}
  </div>}
- </article>)}</div>:<div className="empty">Листы обмера ещё не созданы. Создайте первый лист для изделия.</div>}</>;
+ </article>;
+ })}</div>:<div className="empty">Листы обмера ещё не созданы. Создайте первый лист для изделия.</div>}</>;
 }
 function InspectionHistory({data,refresh}){const rows=data.inspections||[];return <><div className="section"><div><h2>История проверок</h2></div><button className="secondary" onClick={refresh}>Обновить ↻</button></div><div className="tableWrap">{rows.length?<table><thead><tr><th>Дата</th><th>Контейнер</th><th>Изделие</th><th>Контролёр</th><th>Тип</th><th>Карта</th><th>Замеры</th><th>Комментарий</th></tr></thead><tbody>{rows.map(r=><tr key={r.id}><td>{new Date(r.started_at).toLocaleString('ru-RU')}</td><td>№ {r.bin_id}</td><td>{r.product_name_snapshot}</td><td>{r.controller_name}</td><td>{({first_piece:'Первая деталь',scheduled_round:'Плановая',defect_recheck:'Повторная',rework_acceptance:'После доработки',isolator_return:'Возврат из изолятора',fly_control:'Летучий контроль'}[r.inspection_type]||r.inspection_type)}</td><td>{r.card_version?`v${r.card_version}`:'Без карты'}</td><td>{r.measured_parameters}</td><td>{r.comment||'—'}</td></tr>)}</tbody></table>:<div className="empty">Проверок пока нет.</div>}</div></>;}
 function RoleLinks({nav,onNavigate}){return <><div className="section"><div><h2>Рабочие разделы</h2></div></div><div className="tiles">{nav.filter(([id])=>id!=='overview').map(([id,ic,label])=><button className="tile" key={id} type="button" onClick={()=>onNavigate(id)}><i>{ic}</i><b>{label}</b></button>)}</div></>;}
