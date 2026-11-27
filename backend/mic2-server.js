@@ -1425,9 +1425,10 @@ app.post('/api/qc/finished-boxes/:boxId/close', authenticate, requirePermission(
  const c=await pool.connect();
  try{
   await c.query('BEGIN');
-  const box=await c.query('SELECT id,quantity,box_norm_snapshot,closed_at FROM mic2.finished_boxes WHERE id=$1 FOR UPDATE',[boxId]);
+  const box=await c.query('SELECT id,quantity,box_norm_snapshot,closed_at,created_by FROM mic2.finished_boxes WHERE id=$1 FOR UPDATE',[boxId]);
   if(!box.rowCount)throw Object.assign(new Error('Коробка не найдена'),{status:404});
   if(box.rows[0].closed_at)throw Object.assign(new Error('Коробка уже закрыта'),{status:409});
+  if(Number(box.rows[0].created_by)!==Number(req.employee.id))throw Object.assign(new Error('Закрыть коробку может только сотрудник, который её открыл'),{status:403});
   if(Number(box.rows[0].quantity)<1)throw Object.assign(new Error('Нельзя закрыть пустую коробку'),{status:409});
   await c.query('UPDATE mic2.finished_boxes SET closed_at=now(),closed_by=$2 WHERE id=$1',[boxId,req.employee.id]);
   await c.query(`INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,before_data,after_data,reason)
