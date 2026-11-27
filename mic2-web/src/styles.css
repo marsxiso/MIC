@@ -286,3 +286,98 @@ main .tableWrap th{ white-space:nowrap; }
 .flyScheduleTable .smallButton{min-width:104px;padding:8px 11px}
 .flySchedulePanel+.tableWrap>.empty{padding:26px 20px;text-align:center}
 @media(max-width:760px){.flySchedulePanel{padding:14px 12px}.flySchedulePanel>.section{align-items:flex-start;gap:10px}.flySchedulePanel>.section>.status{font-size:9px}.flyScheduleTable td{padding:12px 10px}}
+
+/* MIC unified visual system — restrained, readable, consistent across workspaces */
+:root{
+ --mic-bg:#101a21;--mic-surface:#172830;--mic-surface-raised:#1b3038;
+ --mic-border:#30464d;--mic-border-soft:#293e45;--mic-text:#eaf1f2;
+ --mic-muted:#8ba1a8;--mic-accent:#83cbb5;--mic-accent-deep:#397c70;
+}
+body{background:radial-gradient(ellipse at 78% -12%,rgba(49,105,100,.22),transparent 36%),var(--mic-bg);color:var(--mic-text)}
+.layout{grid-template-columns:248px minmax(0,1fr)}
+.side{position:sticky;top:0;height:100vh;min-height:100vh;padding:25px 15px 18px;background:rgba(18,31,39,.97);border-right:1px solid #293d44}
+.brand{margin:0 8px 34px}
+.nav{min-height:42px;padding:11px 12px;border:1px solid transparent;border-radius:9px;font-size:12px;transition:background .16s,border-color .16s,color .16s}
+.nav.selected{background:linear-gradient(100deg,#244744,#203a3d);border-color:#31564f;color:#e3fff4;box-shadow:inset 3px 0 #83cbb5}
+.nav:hover:not(.selected){background:#1a3038;color:#e0eeee}
+main{width:100%;max-width:1760px;margin:0 auto;padding:30px clamp(22px,3vw,48px) 56px}
+main>header{min-height:54px;margin-bottom:28px;padding-bottom:18px;border-bottom:1px solid rgba(65,91,96,.45)}
+main>header h1{font-size:26px;line-height:1.2;letter-spacing:-.045em}
+.profile{background:#192b33;border-color:#344b52;padding:5px 7px 5px 6px}
+.profile b{font-size:10px}.profile small{font-size:9px}
+.section{gap:16px;margin:27px 0 13px}
+.section h2{font-size:16px;letter-spacing:-.02em}
+.section p{font-size:10px;line-height:1.55}
+h3{letter-spacing:-.015em}
+p{line-height:1.5}
+.metrics{gap:12px}
+.metric{position:relative;padding:17px 18px;border-radius:13px;background:linear-gradient(145deg,#1b3038,#17272f);border-color:#304950;transition:border-color .16s,transform .16s}
+.metric small{font-size:10px;letter-spacing:.01em}
+.metric strong{font-size:29px;font-variant-numeric:tabular-nums;margin:11px 0 4px}
+.metricClickable:hover{border-color:#5a9588;transform:translateY(-2px)}
+.tiles{gap:11px}
+.tile{min-height:112px;padding:16px 17px;border-radius:12px;background:linear-gradient(145deg,#1b3038,#192a32);border-color:#304950;transition:transform .16s,border-color .16s,background .16s}
+.tile:hover,.tile:focus-visible{background:#203941;border-color:#5a9588;transform:translateY(-2px)}
+.primary,.secondary{min-height:34px;border-radius:8px;padding:9px 13px;font-size:10px;transition:background .15s,border-color .15s,transform .15s}
+.primary{background:linear-gradient(135deg,#438d7d,#347365);border-color:#579d8d;box-shadow:0 2px 8px #0a171522}
+.primary:hover:not(:disabled){background:linear-gradient(135deg,#4c9b89,#3b806f);transform:translateY(-1px)}
+.secondary{background:#1b3038;border-color:#3a535a;color:#d1e1e2}
+.secondary:hover:not(:disabled){background:#244049;border-color:#5a7b7e}
+.tableWrap{border:1px solid #304950;border-radius:12px;background:#17272f;box-shadow:0 5px 18px rgba(0,0,0,.08)}
+table{border-collapse:separate;border-spacing:0}
+th{padding:13px 15px;background:#1b3038;color:#91a9ad;font-size:9px;letter-spacing:.09em;border-bottom:1px solid #385159}
+td{padding:13px 15px;font-size:11px;line-height:1.45;border-bottom:1px solid #293e45}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover{background:rgba(58,99,94,.12)}
+td small{line-height:1.45}
+.status{font-size:9px;letter-spacing:.01em;padding:5px 9px;border:1px solid transparent}
+.status.active{background:#183f36;border-color:#2d6655;color:#9ce1c4}
+.status.draft{background:#49372b;border-color:#71503a;color:#ffd0a8}
+.status.warning{background:#3c3525;border-color:#625337;color:#e8d39b}
+.status.missed{background:#542b30;border-color:#8f4248;color:#ffaaa5}
+.empty{padding:30px 22px;text-align:center;line-height:1.6}
+.panel,.cardRecord,.parameterEditor,.measurementInstall{border-radius:12px}
+.panel{background:#17272f;border:1px solid #304950;padding:17px}
+.formField{gap:8px;margin:14px 0;font-size:11px}
+.formField input,.formField select,.formField textarea,.inlineField,.qcCartonActionModal input{border-radius:8px;background:#101d23;border-color:#3b535a;padding:10px 12px;transition:border-color .15s,box-shadow .15s}
+.formField input:focus,.formField select:focus,.formField textarea:focus,.inlineField:focus,.qcCartonActionModal input:focus{border-color:#78bca9;box-shadow:0 0 0 3px rgba(120,188,169,.12);outline:none}
+.modalShade{backdrop-filter:blur(5px);background:rgba(5,13,17,.76)}
+.modalCard{border-color:#3a555d;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.42)}
+.modalHead{padding-bottom:12px;border-bottom:1px solid #30464d}
+.calendarToolbar,.calendarGrid,.calendarDay,.calendarWeekday{border-color:#30464d}
+.calendarToolbar{border-radius:11px;background:#192b33}
+.calendarDay{background:#17272f}
+.calendarDay.today{background:#203a3a}
+.calendarWeekday{background:#1d3038;font-weight:700;letter-spacing:.04em}
+.calendarDate{border-radius:6px}
+.calendarDate:hover{background:#27423f}
+.calendarLegend{font-size:10px}
+.operatorActiveWork,.operatorNoWork{border-radius:13px;background:linear-gradient(145deg,#1b3038,#17272f);border-color:#304950}
+.qcCartonSection,.qcHomeSectionTitle{min-width:0}
+.qcCartonStats article{border-radius:12px;background:linear-gradient(145deg,#1b3038,#192a32);border-color:#304950}
+.qcPackCard{border-radius:13px;background:linear-gradient(145deg,#1b3038,#192a32);border-color:#36504f}
+.qcCartonFilters button{transition:background .15s,border-color .15s}
+.qcCartonFilters button:hover{border-color:#5b9185}
+.qcCartonFilters button.selected{background:#23433f;border-color:#68aa98}
+.loginCard{border-radius:17px}
+@media(max-width:900px){
+ .side{position:relative;height:auto;min-height:0}
+ main{padding:22px 18px 42px}
+ main>header{margin-bottom:22px}
+}
+@media(max-width:600px){
+ main{padding:18px 12px 34px}
+ main>header{align-items:flex-start;gap:12px;padding-bottom:14px}
+ main>header h1{font-size:21px}
+ .section{align-items:flex-start;flex-wrap:wrap;margin:22px 0 11px}
+ .section>.tableActions{width:100%;justify-content:flex-start}
+ .metrics{gap:8px}
+ .metric{padding:13px}
+ .metric strong{font-size:24px}
+ .tiles{gap:8px}
+ .tile{min-height:100px;padding:13px}
+ .tableWrap{border-radius:10px}
+ th,td{padding:11px 10px}
+ .modalShade{padding:10px}
+ .modalCard{padding:15px}
+}
