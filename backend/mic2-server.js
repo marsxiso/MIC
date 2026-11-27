@@ -591,7 +591,7 @@ app.get('/api/qc/fly-control', authenticate, requirePermission('qc:fly:read'), a
   const r=await pool.query(`
    SELECT f.id,f.inspection_id,f.sample_quantity,f.inspection_result,f.defect_quantity,
     f.defect_description,f.action_required,f.created_at,i.cycle_id,i.comment,
-    c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,c.setup_code_snapshot,
+    c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,''::text AS setup_code_snapshot,
     e.full_name AS controller_name,mc.version_no AS card_version,
     (SELECT COUNT(*)::int FROM mic2.qc_measurement_results mr WHERE mr.inspection_id=i.id) AS measured_parameters
    FROM mic2.qc_fly_control_events f
@@ -615,7 +615,7 @@ app.get('/api/qc/fly-control/:id', authenticate, requirePermission('qc:fly:read'
   const r=await pool.query(`
    SELECT f.id,f.inspection_id,f.sample_quantity,f.inspection_result,f.defect_quantity,
     f.defect_description,f.action_required,f.created_at,i.cycle_id,i.comment,
-    c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,c.setup_code_snapshot,
+    c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,''::text AS setup_code_snapshot,
     e.full_name AS controller_name,mc.version_no AS card_version,
     COALESCE(json_agg(json_build_object('parameter_name',mp.parameter_name,
      'nominal_value',mp.nominal_value,'tolerance_text',mp.tolerance_text,'unit',mp.unit,
@@ -779,11 +779,11 @@ app.post('/api/cycles', authenticate, requirePermission('cycles:write'), async (
 });
 
 app.get('/api/bins', authenticate, requirePermission('bins:read'), async (_req,res,next)=>{
-  try { const r=await pool.query("SELECT b.id,b.bin_status,c.id AS cycle_id,c.cycle_no,c.cycle_status,c.product_name_snapshot,c.setup_code_snapshot,e.full_name AS responsible_name,COALESCE(q.quantity,0)::int AS physical_quantity FROM mic2.plastic_bins b LEFT JOIN LATERAL(SELECT * FROM mic2.production_cycles pc WHERE pc.bin_id=b.id ORDER BY pc.cycle_no DESC LIMIT 1)c ON TRUE LEFT JOIN mic2.employees e ON e.id=c.responsible_employee_id LEFT JOIN LATERAL(SELECT SUM(quantity)::int AS quantity FROM mic2.v_cycle_quantity_balances WHERE cycle_id=c.id AND bucket NOT IN ('rework_external','isolator_external','packed','scrapped'))q ON TRUE ORDER BY b.id");res.json({ok:true,bins:r.rows}); } catch(e){next(e);}
+  try { const r=await pool.query("SELECT b.id,b.bin_status,c.id AS cycle_id,c.cycle_no,c.cycle_status,c.product_name_snapshot,''::text AS setup_code_snapshot,e.full_name AS responsible_name,COALESCE(q.quantity,0)::int AS physical_quantity FROM mic2.plastic_bins b LEFT JOIN LATERAL(SELECT * FROM mic2.production_cycles pc WHERE pc.bin_id=b.id ORDER BY pc.cycle_no DESC LIMIT 1)c ON TRUE LEFT JOIN mic2.employees e ON e.id=c.responsible_employee_id LEFT JOIN LATERAL(SELECT SUM(quantity)::int AS quantity FROM mic2.v_cycle_quantity_balances WHERE cycle_id=c.id AND bucket NOT IN ('rework_external','isolator_external','packed','scrapped'))q ON TRUE ORDER BY b.id");res.json({ok:true,bins:r.rows}); } catch(e){next(e);}
 });
 
 app.get('/api/cycles', authenticate, requirePermission('cycles:read','cycles:own:read'), async (req,res,next)=>{
-  try { const operatorFilter=req.employee.role_code==='cnc_operator'; const r=await pool.query("SELECT c.id,c.bin_id,c.cycle_no,c.cycle_status,c.started_at,c.ended_at,c.product_name_snapshot,c.product_code_snapshot,c.setup_code_snapshot,e.full_name AS responsible_name,COALESCE(SUM(CASE WHEN b.bucket NOT IN ('rework_external','isolator_external','packed','scrapped') THEN b.quantity ELSE 0 END),0)::int AS physical_quantity,COALESCE(SUM(CASE WHEN b.bucket='production_pending_qc' THEN b.quantity ELSE 0 END),0)::int AS pending_qc FROM mic2.production_cycles c JOIN mic2.employees e ON e.id=c.responsible_employee_id LEFT JOIN mic2.v_cycle_quantity_balances b ON b.cycle_id=c.id GROUP BY c.id,e.full_name HAVING (NOT $1 OR c.responsible_employee_id=$2) ORDER BY c.started_at DESC LIMIT 300",[operatorFilter,req.employee.id]);res.json({ok:true,cycles:r.rows}); } catch(e){next(e);}
+  try { const operatorFilter=req.employee.role_code==='cnc_operator'; const r=await pool.query("SELECT c.id,c.bin_id,c.cycle_no,c.cycle_status,c.started_at,c.ended_at,c.product_name_snapshot,c.product_code_snapshot,''::text AS setup_code_snapshot,e.full_name AS responsible_name,COALESCE(SUM(CASE WHEN b.bucket NOT IN ('rework_external','isolator_external','packed','scrapped') THEN b.quantity ELSE 0 END),0)::int AS physical_quantity,COALESCE(SUM(CASE WHEN b.bucket='production_pending_qc' THEN b.quantity ELSE 0 END),0)::int AS pending_qc FROM mic2.production_cycles c JOIN mic2.employees e ON e.id=c.responsible_employee_id LEFT JOIN mic2.v_cycle_quantity_balances b ON b.cycle_id=c.id GROUP BY c.id,e.full_name HAVING (NOT $1 OR c.responsible_employee_id=$2) ORDER BY c.started_at DESC LIMIT 300",[operatorFilter,req.employee.id]);res.json({ok:true,cycles:r.rows}); } catch(e){next(e);}
 });
 
 
@@ -826,7 +826,7 @@ app.get('/api/qc/history', authenticate, requirePermission('qc:own:read','qc:all
     const ownOnly=req.employee.role_code==='qc_controller';
     const r=await pool.query(`
       SELECT i.id,i.cycle_id,i.inspection_type,i.started_at,i.completed_at,i.comment,
-        e.full_name AS controller_name,c.bin_id,c.product_name_snapshot,c.setup_code_snapshot,
+        e.full_name AS controller_name,c.bin_id,c.product_name_snapshot,''::text AS setup_code_snapshot,
         mc.version_no AS card_version,COUNT(mr.id)::int AS measured_parameters
       FROM mic2.qc_inspections i
       JOIN mic2.employees e ON e.id=i.controller_id
@@ -847,7 +847,7 @@ app.get('/api/qc/history/:id', authenticate, requirePermission('qc:own:read','qc
     const ownOnly=req.employee.role_code==='qc_controller';
     const r=await pool.query(`
       SELECT i.id,i.cycle_id,i.inspection_type,i.started_at,i.completed_at,i.comment,
-        e.full_name AS controller_name,c.bin_id,c.product_name_snapshot,c.setup_code_snapshot,
+        e.full_name AS controller_name,c.bin_id,c.product_name_snapshot,''::text AS setup_code_snapshot,
         mc.version_no AS card_version,
         COALESCE(json_agg(json_build_object(
           'parameter_name',mp.parameter_name,'nominal_value',mp.nominal_value,
@@ -872,7 +872,7 @@ app.get('/api/qc/history/:id', authenticate, requirePermission('qc:own:read','qc
 app.get('/api/qc/defects', authenticate, requirePermission('qc:defects:read'), async (_req,res,next)=>{
  try{
   const r=await pool.query(`SELECT d.id,d.cycle_id,d.confirmed_quantity,d.defect_description,d.defect_status,d.confirmed_at,
-   c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,c.setup_code_snapshot,e.full_name AS controller_name,
+   c.bin_id,c.cycle_no,c.product_code_snapshot,c.product_name_snapshot,''::text AS setup_code_snapshot,e.full_name AS controller_name,
    COALESCE(x.decided_quantity,0)::int AS decided_quantity,
    GREATEST(d.confirmed_quantity-COALESCE(x.decided_quantity,0),0)::int AS undecided_quantity,
    COALESCE(x.decisions,'[]'::json) AS decisions
@@ -917,7 +917,7 @@ app.get('/api/qc/pending', authenticate, requirePermission('qc:queue:read'), asy
   try {
     const r=await pool.query(`
       SELECT c.id AS cycle_id,c.bin_id,c.cycle_no,c.product_name_snapshot,c.product_code_snapshot,
-        c.setup_code_snapshot,e.full_name AS responsible_name,
+        ''::text AS setup_code_snapshot,e.full_name AS responsible_name,
         c.card_id AS card_id,
         COALESCE(card_params.parameters,'[]'::json) AS measurement_parameters,
         COALESCE(q.quantity,0)::int AS pending_quantity,
