@@ -152,17 +152,20 @@ app.post('/api/auth/login', async (req, res, next) => {
       return res.status(401).json({ ok: false, message: 'Неверный логин или пароль' });
     }
 
+    // Keep the employee signed in across browser restarts.
+    // Role and account status are reloaded from the database on every authenticated request.
+    const sessionLifetime = process.env.JWT_EXPIRES_IN || '30d';
     const token = jwt.sign(
-      { sub: String(employee.id), role: employee.role_code },
+      { sub: String(employee.id) },
       jwtSecret,
-      { algorithm: 'HS256', expiresIn: process.env.JWT_EXPIRES_IN || '8h' },
+      { algorithm: 'HS256', expiresIn: sessionLifetime },
     );
 
     res.json({
       ok: true,
       token,
       token_type: 'Bearer',
-      expires_in: process.env.JWT_EXPIRES_IN || '8h',
+      expires_in: sessionLifetime,
       employee: publicEmployee(employee),
     });
   } catch (error) {
