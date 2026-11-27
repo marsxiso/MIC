@@ -1222,6 +1222,56 @@ app.post('/api/qc/finished-boxes/pack/:cycleId', authenticate, requirePermission
  }finally{c.release();}
 });
 
+
+app.post('/api/qc/finished-boxes/:boxId/close', authenticate, requirePermission('qc:inspect:write'), async(req,res,next)=>{
+ const boxId=Number(req.params.boxId); if(!Number.isSafeInteger(boxId)||boxId<1)return res.status(400).json({ok:false,message:'Некорректный номер коробки'});
+ const c=await pool.connect();
+ try{
+  await c.query('BEGIN');
+  const box=await c.query('SELECT id,quantity,box_norm_snapshot,closed_at FROM mic2.finished_boxes WHERE id=$1 FOR UPDATE',[boxId]);
+  if(!box.rowCount)throw Object.assign(new Error('Коробка не найдена'),{status:404});
+  if(box.rows[0].closed_at)throw Object.assign(new Error('Коробка уже закрыта'),{status:409});
+  if(Number(box.rows[0].quantity)<1)throw Object.assign(new Error('Нельзя закрыть пустую коробку'),{status:409});
+  await c.query('UPDATE mic2.finished_boxes SET closed_at=now(),closed_by=$2 WHERE id=$1',[boxId,req.employee.id]);
+  await c.query(`INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,before_data,after_data,reason)
+   VALUES($1,$2,'qc_finished_carton_closed','finished_box',$3,$4::jsonb,$5::jsonb,$6)`,
+   [req.employee.id,req.employee.role_code,boxId,JSON.stringify({closed_at:null}),JSON.stringify({quantity:box.rows[0].quantity,closed:true}),req.body?.reason||'Коробка закрыта контролёром ОТК']);
+  await c.query('COMMIT'); res.json({ok:true,box_id:boxId,closed:true});
+ }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.status)return res.status(e.status).json({ok:false,message:e.message});next(e);}finally{c.release();}
+});
+
+app.post('/api/qc/finished-boxes/:boxId/refill', authenticate, requirePermission('qc:inspect:write'), async(req,res,next)=>{
+ const boxId=Number(req.params.boxId); if(!Number.isSafeInteger(boxId)||boxId<1)return res.status(400).json({ok:false,message:'Некорректный номер коробки'});
+ const requested=Number(req.body?.quantity);
+ if(!Number.isSafeInteger(requested)||requested<1)return res.status(400).json({ok:false,message:'Укажите количество для дозаполнения'});
+ const c=await pool.connect();
+ try{
+  await c.query('BEGIN');
+  const box=await c.query('SELECT id,cycle_id,quantity,box_norm_snapshot,closed_at FROM mic2.finished_boxes WHERE id=$1 FOR UPDATE',[boxId]);
+  if(!box.rowCount)throw Object.assign(new Error('Коробка не найдена'),{status:404});
+  const b=box.rows[0];
+  if(b.closed_at)throw Object.assign(new Error('Закрытую коробку нельзя дозаполнять'),{status:409});
+  if(!b.cycle_id)throw Object.assign(new Error('Для коробки не указан исходный производственный цикл'),{status:409});
+  const free=Math.max(0,Number(b.box_norm_snapshot)-Number(b.quantity));
+  if(requested>free)throw Object.assign(new Error('Количество превышает свободное место в коробке: '+free+' шт.'),{status:409});
+  const cycle=await c.query("SELECT id,production_finished_at FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' FOR UPDATE",[b.cycle_id]);
+  if(!cycle.rowCount)throw Object.assign(new Error('Исходный производственный цикл уже закрыт'),{status:409});
+  const balance=await c.query("SELECT COALESCE(quantity,0)::int AS quantity FROM mic2.v_cycle_quantity_balances WHERE cycle_id=$1 AND bucket='good_unboxed'",[b.cycle_id]);
+  const available=Number(balance.rows[0]?.quantity||0);
+  if(requested>available)throw Object.assign(new Error('Доступно только '+available+' годных деталей для дозаполнения'),{status:409});
+  const inspection=await c.query("SELECT id FROM mic2.qc_inspections WHERE cycle_id=$1 AND completed_at IS NOT NULL ORDER BY completed_at DESC,id DESC LIMIT 1",[b.cycle_id]);
+  if(!inspection.rowCount)throw Object.assign(new Error('Нет завершённой проверки ОТК'),{status:409});
+  await c.query(`INSERT INTO mic2.finished_box_additions(box_id,quantity,added_by,note)
+    VALUES($1,$2,$3,$4)`,[boxId,requested,req.employee.id,'Дозаполнение коробки ОТК; проверка '+inspection.rows[0].id]);
+  await c.query(`INSERT INTO mic2.cycle_quantity_movements(cycle_id,movement_type,from_bucket,to_bucket,quantity,entered_by,note)
+    VALUES($1,'packed','good_unboxed','packed',$2,$3,$4)`,[b.cycle_id,requested,req.employee.id,'Дозаполнение коробки ОТК №'+boxId]);
+  await c.query(`INSERT INTO mic2.audit_log(actor_id,actor_role_code,action,entity_type,entity_id,before_data,after_data,reason)
+   VALUES($1,$2,'qc_finished_carton_refilled','finished_box',$3,$4::jsonb,$5::jsonb,$6)`,
+   [req.employee.id,req.employee.role_code,boxId,JSON.stringify({quantity:b.quantity}),JSON.stringify({quantity:Number(b.quantity)+requested,added:requested}),req.body?.reason||'Дозаполнение коробки']);
+  await c.query('COMMIT'); res.json({ok:true,box_id:boxId,added_quantity:requested,new_quantity:Number(b.quantity)+requested,remaining_capacity:free-requested});
+ }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e.status)return res.status(e.status).json({ok:false,message:e.message});next(e);}finally{c.release();}
+});
+
 app.post('/api/bins', authenticate, requirePermission('bins:write'), async (req,res,next)=>{try{const r=await pool.query('INSERT INTO mic2.plastic_bins(created_by) VALUES($1) RETURNING id,bin_status,created_at',[req.employee.id]);res.status(201).json({ok:true,bin:r.rows[0]});}catch(e){next(e);}});
 
 app.post('/api/cycles/:id/output', authenticate, requirePermission('output:own:write','output:manage'), async (req,res,next)=>{
