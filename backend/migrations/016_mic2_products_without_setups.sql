@@ -19,9 +19,13 @@ ALTER TABLE mic2.measurement_cards
   ADD CONSTRAINT measurement_cards_product_id_fkey
   FOREIGN KEY (product_id) REFERENCES mic2.products(id) ON DELETE RESTRICT;
 
--- Remove every constraint that depends on the obsolete setup_id columns,
--- including the old per-setup version uniqueness constraints.
-DO $$
+-- Drop the legacy composite FK first: it references the old (id, setup_id)
+-- unique key on measurement_cards and blocks removal of that key.
+ALTER TABLE mic2.production_cycles
+  DROP CONSTRAINT IF EXISTS production_cycles_card_setup_fk;
+
+-- Remove every remaining constraint that depends on obsolete setup_id columns.
+DO $
 DECLARE r RECORD;
 BEGIN
   FOR r IN
