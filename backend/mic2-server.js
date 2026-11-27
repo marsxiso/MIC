@@ -1163,7 +1163,7 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
   const c=await pool.connect();
   try{
     await c.query('BEGIN');
-    const cycle=await c.query("SELECT id,card_id FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' FOR UPDATE",[cycleId]);
+    const cycle=await c.query("SELECT id,bin_id,card_id,production_finished_at FROM mic2.production_cycles WHERE id=$1 AND cycle_status='active' FOR UPDATE",[cycleId]);
     if(!cycle.rowCount)throw Object.assign(new Error('Активный производственный цикл не найден'),{status:404});
     const measurementRows=Array.isArray(b.measurements)?b.measurements:[];
     let validParameters=[];
@@ -1195,10 +1195,22 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
     let defect=null;
     if(defective>0){
       const d=await c.query(`
-        INSERT INTO mic2.defects(cycle_id,confirmed_by,confirmed_quantity,defect_description)
-        VALUES($1,$2,$3,$4) RETURNING id,confirmed_quantity,defect_description,defect_status
+        INSERT INTO mic2.defects(cycle_id,confirmed_by,confirmed_quantity,defect_description,defect_status)
+        VALUES($1,$2,$3,$4,'active') RETURNING id,confirmed_quantity,defect_description,defect_status
       `,[cycleId,req.employee.id,defective,description]);
       defect=d.rows[0];
+      await c.query(`
+        INSERT INTO mic2.cycle_quantity_movements(cycle_id,movement_type,from_bucket,to_bucket,quantity,defect_id,entered_by,note)
+        VALUES($1,'qc_to_isolator','production_pending_qc','isolator_external',$2,$3,$4,$5)
+      `,[cycleId,defective,defect.id,req.employee.id,'Дефектные детали перемещены в изолятор после приёмки ОТК']);
+      await c.query(`
+        INSERT INTO mic2.isolator_movements(defect_id,movement_type,quantity,confirmed_by,note)
+        VALUES($1,'in',$2,$3,$4)
+      `,[defect.id,defective,req.employee.id,'Поступление в изолятор по итогам приёмки ОТК']);
+      await c.query(`
+        INSERT INTO mic2.defect_dispositions(defect_id,disposition_type,quantity,performed_by,confirmed_by,note)
+        VALUES($1,'isolator_in',$2,$3,$3,$4)
+      `,[defect.id,defective,req.employee.id,'Автоматическое помещение в изолятор при приёмке ОТК']);
     }
     if(good>0){
       await c.query(`
@@ -1206,8 +1218,21 @@ app.post('/api/qc/inspect', authenticate, requirePermission('qc:inspect:write'),
         VALUES($1,'qc_good','production_pending_qc','good_unboxed',$2,$3,$4)
       `,[cycleId,good,req.employee.id,comment||'Принято ОТК']);
     }
+    let sourceBinReleased=false;
+    if(cycle.rows[0].production_finished_at){
+      const residue=await c.query(`
+        SELECT COALESCE(SUM(quantity),0)::int AS quantity
+        FROM mic2.v_cycle_quantity_balances
+        WHERE cycle_id=$1 AND bucket NOT IN ('packed','scrapped','rework_external','isolator_external')
+      `,[cycleId]);
+      if(residue.rows[0].quantity===0){
+        await c.query("UPDATE mic2.production_cycles SET cycle_status='completed',ended_at=COALESCE(ended_at,now()) WHERE id=$1 AND cycle_status='active'",[cycleId]);
+        await c.query("UPDATE mic2.plastic_bins SET bin_status='free' WHERE id=$1 AND bin_status='occupied'",[cycle.rows[0].bin_id]);
+        sourceBinReleased=true;
+      }
+    }
     await c.query('COMMIT');
-    res.status(201).json({ok:true,inspection_id:inspection.rows[0].id,good_quantity:good,defect_quantity:defective,defect});
+    res.status(201).json({ok:true,inspection_id:inspection.rows[0].id,good_quantity:good,defect_quantity:defective,defect,source_bin_released:sourceBinReleased});
   }catch(e){
     await c.query('ROLLBACK').catch(()=>{});
     if(e.status)return res.status(e.status).json({ok:false,message:e.message});
