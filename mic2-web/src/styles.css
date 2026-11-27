@@ -115,3 +115,43 @@ button{cursor:pointer}button:disabled{opacity:.55;cursor:wait}.tableActions{disp
 .operatorActiveWork>button{align-self:flex-start;margin-top:auto}
 @media(max-width:760px){.operatorActiveWork .operatorWorkMeta{grid-template-columns:1fr 1fr}}
 @media(max-width:480px){.operatorActiveWork .operatorWorkMeta{grid-template-columns:1fr}}
+
+/* QC finished cartons workspace */
+.qcCartonsPage{display:flex;flex-direction:column;gap:22px}
+.qcCartonsIntro{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:22px 24px;background:linear-gradient(115deg,#1d373b,#192a32 70%);border:1px solid #36534f;border-radius:16px}
+.qcCartonsIntro h2{font-size:22px;margin:7px 0 5px;letter-spacing:-.03em}
+.qcCartonsIntro p{font-size:11px;line-height:1.6;max-width:640px}
+.qcCartonStats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.qcCartonStats article{padding:16px 18px;border:1px solid #30464d;background:#192b33;border-radius:13px;min-width:0}
+.qcCartonStats small,.qcCartonStats span{display:block;color:#8ba1a8;font-size:10px}
+.qcCartonStats b{display:block;font-size:27px;letter-spacing:-.04em;margin:8px 0 5px;color:#eaf5f2}
+.qcCartonStats span{font-size:9px}
+.qcCartonSection{display:flex;flex-direction:column;gap:13px}
+.qcCartonSectionHead{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.qcCartonSectionHead h3{font-size:15px;margin:0}
+.qcCartonSectionHead p{font-size:10px}
+.qcPackGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:13px}
+.qcPackCard{padding:17px;background:#192b33;border:1px solid #36504f;border-radius:14px;min-width:0}
+.qcPackTop{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.qcPackTop small{font-size:10px;color:#81999f}
+.qcPackCard h4{font-size:14px;line-height:1.4;margin:14px 0;color:#edf6f4}
+.qcPackMeta{display:flex;flex-wrap:wrap;gap:8px 18px;color:#8fa6ac;font-size:10px}
+.qcPackMeta b{color:#d8e7e5;font-weight:600}
+.qcPackNumbers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:17px 0 11px}
+.qcPackNumbers>div{padding:10px;background:#14242b;border:1px solid #2d454b;border-radius:9px;min-width:0}
+.qcPackNumbers small{display:block;color:#829ba1;font-size:9px;line-height:1.35}
+.qcPackNumbers b{display:block;margin-top:6px;font-size:18px;color:#dff3ec;white-space:nowrap}
+.qcPackNumbers i{font-size:9px;color:#8da5a9;font-style:normal;font-weight:500}
+.qcPackProgress,.qcCartonFill{height:6px;border-radius:10px;background:#2a3e43;overflow:hidden}
+.qcPackProgress{margin:0 0 14px}
+.qcPackProgress span,.qcCartonFill span{display:block;height:100%;border-radius:10px;background:linear-gradient(90deg,#4c9b85,#9bd7b9)}
+.qcPackCard>.primary{width:100%;padding:11px}
+.qcCartonEmpty{padding:28px;text-align:center;background:#172830;border:1px dashed #3a5558;border-radius:12px}
+.qcCartonEmpty b{font-size:12px;color:#d8e7e5}
+.qcCartonEmpty p{margin-top:7px}
+.qcCartonSearch{width:min(310px,100%);background:#101c22;border:1px solid #3b5057;border-radius:8px;padding:10px 12px;color:#edf5f5;font:inherit;font-size:11px;outline:none}
+.qcCartonSearch:focus{border-color:#83c5b3}
+.qcCartonNumber{color:#a9dfcb;white-space:nowrap}
+.qcCartonFill{width:90px;margin-bottom:5px}
+@media(max-width:900px){.qcCartonStats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.qcCartonsIntro{align-items:flex-start;padding:17px;flex-direction:column}.qcCartonsIntro .secondary{align-self:flex-end}.qcCartonSectionHead{align-items:flex-start;flex-direction:column}.qcCartonSearch{width:100%}.qcPackNumbers{gap:5px}.qcPackNumbers>div{padding:8px}.qcPackNumbers b{font-size:16px}}
